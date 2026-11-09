@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>falcon_poscmd_to_odom</name>
+  <version>0.1.0</version>
+  <description>ROS 2 position-command to odometry adapter for the FALCON simulator.</description>
+
+  <maintainer email="noreply@example.com">FALCON ROS 2 port maintainers</maintainer>
+  <license>LicenseRef-FALCON-Upstream</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>falcon_interfaces</depend>
+  <depend>nav_msgs</depend>
+  <depend>rclcpp</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

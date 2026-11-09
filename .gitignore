@@ -3,3 +3,10 @@ exploration_planner/utils/resource/*.txt
 exploration_planner/utils/resource/*.tsp
 exploration_planner/utils/resource/*.tsp
 exploration_planner/fast_planner/result/*
+
+# ROS 2 colcon workspace
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+__pycache__/
+*.pyc
