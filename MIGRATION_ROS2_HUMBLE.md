@@ -127,10 +127,18 @@ Completed milestones:
   executors.
 - Trajectory-server tests cover normal command sampling, final-state holding,
   pre-start behavior, malformed messages, and misordered trajectory IDs.
-- The complete workspace currently reports 27 passing tests with no failures.
+- The trajectory-server milestone brought the workspace to 27 passing tests.
+- `falcon_exploration_preprocessing` now provides a ROS-independent,
+  C++17 connectivity-graph library as the first exploration-manager dependency.
+- Connectivity tests cover hop-based BFS, minimum-cost graph search, node and
+  edge removal, unknown connected-component classification, and lossless graph
+  persistence.
+- Graph loading no longer doubles every saved edge cost, malformed files do not
+  destroy the current graph, and references to missing nodes are rejected.
+- The complete workspace currently reports 31 passing tests with no failures.
 
-The next target is exploration-manager integration and the ROS 2 launch graph
-that connects planning, trajectory execution, mapping, and the simulator.
+The next targets are `frontier_finder` and `hierarchical_grid`, followed by
+exploration-manager integration and the complete ROS 2 launch graph.
 
 Validation commands:
 
@@ -143,6 +151,7 @@ colcon test --packages-select falcon_voxel_mapping
 colcon test --packages-select falcon_pathfinding
 colcon test --packages-select falcon_trajectory
 colcon test --packages-select falcon_fast_planner
+colcon test --packages-select falcon_exploration_preprocessing
 colcon test-result --verbose
 
 ros2 run falcon_voxel_mapping map_server_node --ros-args \
