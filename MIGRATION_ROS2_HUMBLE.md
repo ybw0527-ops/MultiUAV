@@ -75,15 +75,20 @@ Completed milestones:
 - `falcon_poscmd_to_odom` builds and passes a live ROS 2 topic smoke test.
 - `falcon_exploration_utils` builds as a native ament library with the original
   ray casting, LKH-TSP, SOP, system-information, and Kindr math code.
+- `falcon_voxel_mapping` builds the ROS-independent TSDF, ESDF, occupancy-grid,
+  coordinate-conversion, map I/O, and point-cloud integration core.
 - Perception parameters now use ROS 2 parameter names and support both pinhole
   cameras and 360-degree lidar models.
 - The pose transformer uses `rclcpp::Time`, bounded message storage, and
   timestamp interpolation.
 - Unit tests cover pinhole FOV, omnidirectional lidar elevation, and transform
   interpolation.
+- Voxel-map tests cover index/address conversion, boundary-safe inflation,
+  weighted TSDF fusion, and Euclidean ESDF distance propagation.
 
-The next dependency-layer target is `voxel_mapping`, followed by pathfinding
-and trajectory generation.
+The next target is the ROS 2 `MapServer` wrapper for depth images, point clouds,
+map visualization, and map persistence. Pathfinding and trajectory generation
+follow after that wrapper is operational.
 
 Validation commands:
 
@@ -105,6 +110,10 @@ colcon test-result --verbose
   package and improving offline reproducibility.
 - Legacy ROS 1 `minkindr_conversions` headers are intentionally not exported by
   the ROS 2 package. The transformer performs native ROS 2 message conversion.
+- The upstream ESDF implementation used variable-length stack arrays, a GNU
+  extension rather than standard C++17. The ROS 2 package uses bounded vectors.
+- Occupancy inflation now rejects out-of-map neighbor indices before computing
+  linear addresses, preventing boundary voxels from wrapping across the map.
 
 ## Known upstream issues to preserve or address explicitly
 
