@@ -10,6 +10,8 @@
       depth_decimation_filter: false
       skip_pixel: 4
       concurrent_depth_input_max: 1
+      concurrent_pointcloud_input_max: 1
+      save_map_path: "map.pcd"
 
       publish_tsdf: true
       publish_esdf: true
@@ -17,9 +19,9 @@
       publish_tsdf_slice: true
       publish_esdf_slice: true
       publish_occupancy_grid_slice: true
-      publish_tsdf_period: true
-      publish_esdf_period: true
-      publish_occupancy_grid_period: true
+      publish_tsdf_period: 1.0
+      publish_esdf_period: 1.0
+      publish_occupancy_grid_period: 1.0
       tsdf_slice_height: 0.5
       tsdf_slice_visualization_height: 0.5
       esdf_slice_height: 1.0
@@ -39,6 +41,35 @@
       occupancy_grid:
         sdf_cutoff_distance_scale: 0.5
         mode: "GEN_TSDF"
+
+    map_config:
+      map_size:
+        map_min_x: -10.0
+        map_min_y: -10.0
+        map_min_z: 0.0
+        map_max_x: 10.0
+        map_max_y: 10.0
+        map_max_z: 5.0
+        box_min_x: -10.0
+        box_min_y: -10.0
+        box_min_z: 0.0
+        box_max_x: 10.0
+        box_max_y: 10.0
+        box_max_z: 5.0
+        vbox_min_x: -10.0
+        vbox_min_y: -10.0
+        vbox_min_z: 0.0
+        vbox_max_x: 10.0
+        vbox_max_y: 10.0
+        vbox_max_z: 5.0
+
+    uav_model:
+      sensing_parameters:
+        camera_intrinsics:
+          fx: 320.0
+          fy: 320.0
+          cx: 320.0
+          cy: 240.0
 
     transformer:
       world_frame: "world"

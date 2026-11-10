@@ -75,8 +75,13 @@ Completed milestones:
 - `falcon_poscmd_to_odom` builds and passes a live ROS 2 topic smoke test.
 - `falcon_exploration_utils` builds as a native ament library with the original
   ray casting, LKH-TSP, SOP, system-information, and Kindr math code.
-- `falcon_voxel_mapping` builds the ROS-independent TSDF, ESDF, occupancy-grid,
-  coordinate-conversion, map I/O, and point-cloud integration core.
+- `falcon_voxel_mapping` builds both the TSDF/ESDF/occupancy-grid core and the
+  native ROS 2 `map_server_node` runtime.
+- `MapServer` accepts depth images, local point clouds, and one-shot global maps
+  with ROS 2 sensor-data QoS; it publishes map layers, slices, poses, coverage,
+  and debug markers and exposes the map-save service.
+- Map bounds, camera intrinsics, visualization controls, and map output path are
+  provided by a ROS 2 YAML file. The hard-coded upstream user path was removed.
 - Perception parameters now use ROS 2 parameter names and support both pinhole
   cameras and 360-degree lidar models.
 - The pose transformer uses `rclcpp::Time`, bounded message storage, and
@@ -85,20 +90,28 @@ Completed milestones:
   interpolation.
 - Voxel-map tests cover index/address conversion, boundary-safe inflation,
   weighted TSDF fusion, and Euclidean ESDF distance propagation.
+- A `MapServer` test covers ROS 2 parameter construction, map geometry, box
+  queries, and point-cloud coordinate transformation.
+- The runtime node was smoke-tested with the migrated YAML at 0.1 m resolution
+  on a 20 x 20 x 5 m map. The workspace currently reports 11 passing tests.
 
-The next target is the ROS 2 `MapServer` wrapper for depth images, point clouds,
-map visualization, and map persistence. Pathfinding and trajectory generation
-follow after that wrapper is operational.
+The next target is the pathfinding package, followed by trajectory generation
+and the planner-facing mapping integration.
 
 Validation commands:
 
 ```bash
-./scripts/build_ros2_humble.bash --packages-select falcon_exploration_utils
+./scripts/build_ros2_humble.bash --packages-select falcon_voxel_mapping
 cd ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-colcon test --packages-select falcon_exploration_utils
+colcon test --packages-select falcon_voxel_mapping
 colcon test-result --verbose
+
+ros2 run falcon_voxel_mapping map_server_node --ros-args \
+  --params-file src/falcon_voxel_mapping/config/voxel_mapping.yaml
+
+ros2 launch falcon_voxel_mapping map_server.launch.py
 ```
 
 ## Ubuntu 22.04 compatibility notes
@@ -114,6 +127,10 @@ colcon test-result --verbose
   extension rather than standard C++17. The ROS 2 package uses bounded vectors.
 - Occupancy inflation now rejects out-of-map neighbor indices before computing
   linear addresses, preventing boundary voxels from wrapping across the map.
+- The upstream map callbacks launched detached worker threads that captured the
+  server object. The initial ROS 2 baseline performs deterministic, mutex-guarded
+  fusion inside the callback so shutdown cannot race a destroyed `MapServer`.
+  Controlled callback-group parallelism can be added after end-to-end profiling.
 
 ## Known upstream issues to preserve or address explicitly
 
