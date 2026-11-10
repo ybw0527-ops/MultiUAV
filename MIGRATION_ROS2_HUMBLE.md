@@ -108,10 +108,19 @@ Completed milestones:
   visualization time steps are validated. Paired visualization lists are
   bounded by their common length and point-cloud display scale cannot collapse
   to zero.
-- The complete workspace currently reports 20 passing tests with no failures.
+- The trajectory milestone brought the workspace to 20 passing tests.
+- `falcon_fast_planner` now integrates the migrated map server, A* search,
+  polynomial/B-spline trajectory generation, yaw optimization, and trajectory
+  collision checking behind a native ROS 2 manager library.
+- Planner-manager tests cover short position and yaw trajectories, invalid tour
+  rejection, collision checks, and a fully optimized four-point tour.
+- Multi-segment timing is now initialized deterministically. The upstream code
+  left intermediate segment times uninitialized for tours containing more than
+  three points.
+- The complete workspace currently reports 24 passing tests with no failures.
 
-The next target is `fast_planner`, beginning with planner-facing integration of
-the migrated mapping, pathfinding, and trajectory libraries.
+The next target is the ROS 2 trajectory-server runtime and its planner message
+contract, followed by exploration-manager integration.
 
 Validation commands:
 
@@ -123,6 +132,7 @@ source install/setup.bash
 colcon test --packages-select falcon_voxel_mapping
 colcon test --packages-select falcon_pathfinding
 colcon test --packages-select falcon_trajectory
+colcon test --packages-select falcon_fast_planner
 colcon test-result --verbose
 
 ros2 run falcon_voxel_mapping map_server_node --ros-args \
@@ -159,6 +169,9 @@ ros2 launch falcon_voxel_mapping map_server.launch.py
 - The B-spline optimizer now initializes every cost weight and result field and
   preserves a valid initial solution before invoking NLopt. This removes
   undefined behavior present when optional upstream costs were disabled.
+- The planner validates finite, distinct tour points and nonnegative time lower
+  bounds before trajectory construction. Timing and optimization profiling use
+  a monotonic clock so simulation-time changes do not corrupt measurements.
 
 ## Known upstream issues to preserve or address explicitly
 
@@ -167,3 +180,7 @@ ros2 launch falcon_voxel_mapping map_server.launch.py
 - The lightweight simulator is not Gazebo and uses rendered depth plus synthetic odometry.
 - The repository does not currently provide a root license file; redistribution terms
   must be confirmed before publishing a derivative repository.
+- ESDF interpolation currently expects a one-cell margin inside the configured
+  map. An optimizer query too close to a map boundary can still trigger the
+  upstream bounds check; production scenarios must preserve that margin until
+  boundary-safe interpolation is implemented.
