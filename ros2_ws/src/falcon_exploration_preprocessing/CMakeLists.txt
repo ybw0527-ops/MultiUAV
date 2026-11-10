@@ -17,12 +17,17 @@ find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(falcon_exploration_utils REQUIRED)
 find_package(falcon_voxel_mapping REQUIRED)
-find_package(PCL REQUIRED COMPONENTS common filters)
+find_package(falcon_pathfinding REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(PCL REQUIRED COMPONENTS common filters kdtree)
 find_package(rclcpp REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/connectivity_graph.cpp
   src/frontier_finder.cpp
+  src/hierarchical_grid.cpp
 )
 target_include_directories(${PROJECT_NAME}
   PUBLIC
@@ -34,6 +39,10 @@ target_link_libraries(${PROJECT_NAME} PUBLIC Eigen3::Eigen ${PCL_LIBRARIES})
 ament_target_dependencies(${PROJECT_NAME} PUBLIC
   falcon_exploration_utils
   falcon_voxel_mapping
+  falcon_pathfinding
+  visualization_msgs
+  sensor_msgs
+  pcl_conversions
   rclcpp
 )
 
@@ -49,7 +58,7 @@ install(
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 falcon_exploration_utils falcon_voxel_mapping PCL rclcpp)
+ament_export_dependencies(Eigen3 falcon_exploration_utils falcon_voxel_mapping falcon_pathfinding visualization_msgs sensor_msgs pcl_conversions PCL rclcpp)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -59,6 +68,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_frontier_finder test/test_frontier_finder.cpp)
   target_link_libraries(test_frontier_finder ${PROJECT_NAME})
   ament_target_dependencies(test_frontier_finder rclcpp)
+  ament_add_gtest(test_hierarchical_grid test/test_hierarchical_grid.cpp)
+  target_link_libraries(test_hierarchical_grid ${PROJECT_NAME})
 endif()
 
 ament_package()

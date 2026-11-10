@@ -12,6 +12,10 @@
   <depend>eigen</depend>
   <depend>falcon_exploration_utils</depend>
   <depend>falcon_voxel_mapping</depend>
+  <depend>falcon_pathfinding</depend>
+  <depend>visualization_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>pcl_conversions</depend>
   <depend>libpcl-all-dev</depend>
   <depend>rclcpp</depend>
 

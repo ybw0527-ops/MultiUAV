@@ -144,10 +144,22 @@ Completed milestones:
   are rejected before the search begins.
 - Empty hierarchical cell-height input is handled safely, and low-resolution
   cluster thresholds are clamped instead of collapsing to zero.
-- The complete workspace currently reports 34 passing tests with no failures.
+- `hierarchical_grid` now builds in the ROS 2 preprocessing library with native
+  parameters, typed marker/point-cloud publishers, and monotonic profiling.
+- Grid coordinate queries reject out-of-bounds positions before flattening IDs;
+  bounding-box updates clamp each axis independently to prevent row wrapping.
+- Frontier inputs and grid parameters are validated before changing grid state.
+  Low-resolution component thresholds are bounded by the available sample count,
+  and CCL occupancy queries reject out-of-map indices.
+- Regression tests cover 2D grid bounds, frontier assignment, unknown-map CCL
+  updates, finite cost matrices, and invalid configuration. The 3D path is ported
+  but has not yet received a dedicated regression test.
+- The complete workspace currently reports 38 passing checks with no failures
+  (colcon's aggregate includes both GoogleTest cases and CTest entries).
 
-The next target is `hierarchical_grid`, followed by exploration-manager
-integration and the complete ROS 2 launch graph.
+The next target is exploration-manager integration and the complete ROS 2
+launch graph. Upstream currently implements one hierarchical-grid level only;
+the ROS 2 port explicitly rejects other level counts.
 
 Validation commands:
 

@@ -1,0 +1,11 @@
+/**:
+  ros__parameters:
+    hgrid:
+      num_levels: 1
+      cell_size_max: 5.0
+      min_unknown_num_scale: 0.1
+      ccl_step: 2
+      verbose: false
+    exploration_manager:
+      hybrid_search_radius: 10.0
+      unknown_penalty_factor: 2.0
