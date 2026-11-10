@@ -97,11 +97,21 @@ Completed milestones:
 - `falcon_pathfinding` builds the original 3-D A* search profiles and path-cost
   evaluator as an ament library with ROS 2 parameters.
 - Pathfinding tests cover unobstructed paths, obstacle avoidance, safe node-pool
-  exhaustion, and translation/yaw travel-time lower bounds. The workspace
-  currently reports 14 passing tests.
+  exhaustion, and translation/yaw travel-time lower bounds.
+- `falcon_trajectory` builds the polynomial trajectory, non-uniform B-spline,
+  NLopt B-spline optimizer, and planning-visualization code as a native ament
+  library.
+- Trajectory tests cover polynomial endpoint constraints, B-spline waypoint and
+  derivative interpolation, ROS 2 optimizer parameters, a real NLopt yaw
+  optimization, and ROS 2 visualization-marker metadata.
+- Optimizer inputs, physical limits, knot intervals, sampling resolution, and
+  visualization time steps are validated. Paired visualization lists are
+  bounded by their common length and point-cloud display scale cannot collapse
+  to zero.
+- The complete workspace currently reports 20 passing tests with no failures.
 
-The next target is trajectory generation, followed by the planner-facing
-mapping and pathfinding integration.
+The next target is `fast_planner`, beginning with planner-facing integration of
+the migrated mapping, pathfinding, and trajectory libraries.
 
 Validation commands:
 
@@ -112,6 +122,7 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 colcon test --packages-select falcon_voxel_mapping
 colcon test --packages-select falcon_pathfinding
+colcon test --packages-select falcon_trajectory
 colcon test-result --verbose
 
 ros2 run falcon_voxel_mapping map_server_node --ros-args \
@@ -142,6 +153,12 @@ ros2 launch falcon_voxel_mapping map_server.launch.py
   prematurely.
 - A* now validates positive search profiles and checks node-pool capacity before
   indexing the pool. Resource exhaustion returns `NO_PATH` with a warning.
+- Ubuntu 22.04 provides NLopt 2.7.1. Its CMake package may export
+  `NLopt::nlopt_cxx` rather than `NLopt::nlopt`; the trajectory build accepts
+  either target name.
+- The B-spline optimizer now initializes every cost weight and result field and
+  preserves a valid initial solution before invoking NLopt. This removes
+  undefined behavior present when optional upstream costs were disabled.
 
 ## Known upstream issues to preserve or address explicitly
 

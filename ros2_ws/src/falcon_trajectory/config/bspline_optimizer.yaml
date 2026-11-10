@@ -1,0 +1,24 @@
+/**:
+  ros__parameters:
+    bspline_opt:
+      bspline_degree: 3
+      safe_distance: 0.7
+      max_iteration_num: 1000
+      max_iteration_time: 0.01
+
+      pos:
+        smoothness: 20.0
+        distance: 50.0
+        feasibility: 1.0
+        start: 100.0
+        end: 50.0
+        time: 3.0
+
+      yaw:
+        smoothness: 50.0
+        start: 50.0
+        end: 50.0
+        waypoint: 50.0
+
+    planning_vis:
+      world_frame: "world"
