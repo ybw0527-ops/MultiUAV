@@ -1,0 +1,7 @@
+/**:
+  ros__parameters:
+    uav_model.sensing_parameters.fov.horizontal: 1.500983156
+    uav_model.sensing_parameters.fov.vertical: 0.994837674
+    perception_utils.fov_type: pinhole
+    perception_utils.max_dist: 5.0
+    perception_utils.vis_dist: 1.0

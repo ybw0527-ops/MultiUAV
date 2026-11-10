@@ -67,12 +67,44 @@ CUDA is intentionally deferred until the CPU-side planner and interfaces build.
 - Connectivity-aware task allocation and relay behavior
 - Surface inspection and reconstruction metrics
 
-## Current milestone
+## Current status
 
-The first milestone is complete when `falcon_interfaces` and
-`falcon_poscmd_to_odom` build on a clean ROS 2 Humble environment, generated
-message types can be imported, and a position command produces an odometry
-message through the native ROS 2 node.
+Completed milestones:
+
+- `falcon_interfaces` builds all 18 migrated message types.
+- `falcon_poscmd_to_odom` builds and passes a live ROS 2 topic smoke test.
+- `falcon_exploration_utils` builds as a native ament library with the original
+  ray casting, LKH-TSP, SOP, system-information, and Kindr math code.
+- Perception parameters now use ROS 2 parameter names and support both pinhole
+  cameras and 360-degree lidar models.
+- The pose transformer uses `rclcpp::Time`, bounded message storage, and
+  timestamp interpolation.
+- Unit tests cover pinhole FOV, omnidirectional lidar elevation, and transform
+  interpolation.
+
+The next dependency-layer target is `voxel_mapping`, followed by pathfinding
+and trajectory generation.
+
+Validation commands:
+
+```bash
+./scripts/build_ros2_humble.bash --packages-select falcon_exploration_utils
+cd ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+colcon test --packages-select falcon_exploration_utils
+colcon test-result --verbose
+```
+
+## Ubuntu 22.04 compatibility notes
+
+- GCC 10 and newer default to `-fno-common`; the vendored C implementation of
+  LKH requires `-fcommon` for its historical global-variable layout.
+- The vendored Kindr snapshot only uses glog-style assertion macros. A small
+  local compatibility header provides those checks, avoiding an extra system
+  package and improving offline reproducibility.
+- Legacy ROS 1 `minkindr_conversions` headers are intentionally not exported by
+  the ROS 2 package. The transformer performs native ROS 2 message conversion.
 
 ## Known upstream issues to preserve or address explicitly
 
