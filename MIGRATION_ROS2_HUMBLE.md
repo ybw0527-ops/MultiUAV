@@ -93,10 +93,15 @@ Completed milestones:
 - A `MapServer` test covers ROS 2 parameter construction, map geometry, box
   queries, and point-cloud coordinate transformation.
 - The runtime node was smoke-tested with the migrated YAML at 0.1 m resolution
-  on a 20 x 20 x 5 m map. The workspace currently reports 11 passing tests.
+  on a 20 x 20 x 5 m map.
+- `falcon_pathfinding` builds the original 3-D A* search profiles and path-cost
+  evaluator as an ament library with ROS 2 parameters.
+- Pathfinding tests cover unobstructed paths, obstacle avoidance, safe node-pool
+  exhaustion, and translation/yaw travel-time lower bounds. The workspace
+  currently reports 14 passing tests.
 
-The next target is the pathfinding package, followed by trajectory generation
-and the planner-facing mapping integration.
+The next target is trajectory generation, followed by the planner-facing
+mapping and pathfinding integration.
 
 Validation commands:
 
@@ -106,6 +111,7 @@ cd ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 colcon test --packages-select falcon_voxel_mapping
+colcon test --packages-select falcon_pathfinding
 colcon test-result --verbose
 
 ros2 run falcon_voxel_mapping map_server_node --ros-args \
@@ -131,6 +137,11 @@ ros2 launch falcon_voxel_mapping map_server.launch.py
   server object. The initial ROS 2 baseline performs deterministic, mutex-guarded
   fusion inside the callback so shutdown cannot race a destroyed `MapServer`.
   Controlled callback-group parallelism can be added after end-to-end profiling.
+- A* search budgets use `std::chrono::steady_clock` instead of ROS time, so a
+  paused simulator clock cannot stall the search and a clock reset cannot end it
+  prematurely.
+- A* now validates positive search profiles and checks node-pool capacity before
+  indexing the pool. Resource exhaustion returns `NO_PATH` with a warning.
 
 ## Known upstream issues to preserve or address explicitly
 

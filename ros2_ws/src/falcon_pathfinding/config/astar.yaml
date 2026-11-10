@@ -1,0 +1,24 @@
+/**:
+  ros__parameters:
+    astar:
+      lambda_heuristic: 1.0
+      allocate_num: 100000
+      epsilon: 0.0001
+      verbose: false
+
+      profile:
+        default:
+          resolution: 0.5
+          max_search_time: 0.01
+        coarse:
+          resolution: 1.0
+          max_search_time: 0.001
+        coarse2:
+          resolution: 1.0
+          max_search_time: 0.01
+        medium:
+          resolution: 1.0
+          max_search_time: 0.1
+        fine:
+          resolution: 0.1
+          max_search_time: 0.1
