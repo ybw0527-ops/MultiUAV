@@ -218,9 +218,13 @@ void BsplineOptimizer::optimize() {
   // Set axis aligned bounding box for optimization
   Eigen::Vector3d bmin, bmax;
   map_server_->getBox(bmin, bmax);
+  // ESDF interpolation queries the two neighboring voxel centers on each axis.
+  const double interpolation_margin = std::max(0.1, 0.5 * map_server_->getResolution() + 1e-4);
   for (int k = 0; k < 3; ++k) {
-    bmin[k] += 0.1;
-    bmax[k] -= 0.1;
+    bmin[k] += interpolation_margin;
+    bmax[k] -= interpolation_margin;
+    if (bmin[k] >= bmax[k])
+      throw std::invalid_argument("Map box is too narrow for ESDF interpolation");
   }
 
   vector<double> q(variable_num_);

@@ -154,12 +154,35 @@ Completed milestones:
 - Regression tests cover 2D grid bounds, frontier assignment, unknown-map CCL
   updates, finite cost matrices, and invalid configuration. The 3D path is ported
   but has not yet received a dedicated regression test.
-- The complete workspace currently reports 38 passing checks with no failures
+- The hierarchical-grid milestone reported 38 passing checks with no failures
   (colcon's aggregate includes both GoogleTest cases and CTest entries).
 
-The next target is exploration-manager integration and the complete ROS 2
-launch graph. Upstream currently implements one hierarchical-grid level only;
-the ROS 2 port explicitly rejects other level counts.
+- `falcon_exploration_manager` now integrates hierarchical coverage planning,
+  frontier refinement, LKH/SOP ordering, and position/yaw trajectory generation.
+- The exploration state machine uses ROS 2 timers, subscriptions, typed publishers,
+  and ROS clock timestamps. Visualization is synchronous within the default
+  mutually exclusive callback group; detached threads were removed.
+- LKH files use a unique writable temporary directory rather than the package
+  installation. Invalid odometry and replan timing are rejected, and planning
+  computation profiling uses a steady clock.
+- The exploration launch graph starts the exploration node (including its map
+  server), trajectory server, and optional simulated odometry node. External
+  odometry, sensor pose, depth, and point-cloud topics are configurable.
+- Manager regressions exercise real LKH ordering, position/yaw motion generation,
+  and FSM odometry/trigger prerequisites. A live isolated-domain smoke check
+  verifies node startup, command/odometry traffic, and topic subscription wiring.
+- Trajectory optimization now reserves at least half a voxel for ESDF interpolation
+  instead of a fixed 0.1 m. The manager's 0.5 m-map trajectory integration test
+  exposed the insufficient upstream margin.
+- The manager milestone reports 42 passing colcon checks across nine packages,
+  with no errors, failures, or skips. All migrated map/robot YAML files load via
+  native ROS 2 parameter parsing, and the three-node launch smoke passes.
+
+The next target is the sensor/map-rendering simulator and end-to-end exploration
+validation on the six upstream environments. Upstream currently implements one
+hierarchical-grid level only; the ROS 2 port rejects other level counts. The
+exploration launch graph currently expects external sensor data; it does not yet
+include the unmigrated map renderers or SO3 simulator.
 
 Validation commands:
 
@@ -226,7 +249,6 @@ ros2 run falcon_fast_planner trajectory_server_node --ros-args \
 - The lightweight simulator is not Gazebo and uses rendered depth plus synthetic odometry.
 - The repository does not currently provide a root license file; redistribution terms
   must be confirmed before publishing a derivative repository.
-- ESDF interpolation currently expects a one-cell margin inside the configured
-  map. An optimizer query too close to a map boundary can still trigger the
-  upstream bounds check; production scenarios must preserve that margin until
-  boundary-safe interpolation is implemented.
+- Direct ESDF interpolation queries still require an interpolation cube within
+  the map. Optimization bounds now reserve a resolution-dependent half-voxel
+  margin, but other callers must still respect the map boundary.

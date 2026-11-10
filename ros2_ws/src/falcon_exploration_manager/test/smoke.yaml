@@ -1,0 +1,36 @@
+/**:
+  ros__parameters:
+    voxel_mapping:
+      resolution_fine: 0.5
+      resolution_coarse: 0.5
+      publish_tsdf: false
+      publish_esdf: false
+      publish_occupancy_grid: false
+      publish_tsdf_slice: false
+      publish_esdf_slice: false
+      publish_occupancy_grid_slice: false
+    map_config:
+      map_size:
+        map_min_x: -3.0
+        map_min_y: -3.0
+        map_min_z: 0.0
+        map_max_x: 3.0
+        map_max_y: 3.0
+        map_max_z: 4.0
+        box_min_x: -3.0
+        box_min_y: -3.0
+        box_min_z: 0.0
+        box_max_x: 3.0
+        box_max_y: 3.0
+        box_max_z: 4.0
+        vbox_min_x: -3.0
+        vbox_min_y: -3.0
+        vbox_min_z: 0.0
+        vbox_max_x: 3.0
+        vbox_max_y: 3.0
+        vbox_max_z: 4.0
+    hgrid:
+      cell_size_max: 3.0
+      ccl_step: 1
+    exploration_manager:
+      auto_start: false
