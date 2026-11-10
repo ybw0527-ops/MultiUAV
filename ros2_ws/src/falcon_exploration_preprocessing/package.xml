@@ -11,6 +11,9 @@
 
   <depend>eigen</depend>
   <depend>falcon_exploration_utils</depend>
+  <depend>falcon_voxel_mapping</depend>
+  <depend>libpcl-all-dev</depend>
+  <depend>rclcpp</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

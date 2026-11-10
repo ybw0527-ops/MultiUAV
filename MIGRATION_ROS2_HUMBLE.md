@@ -135,10 +135,19 @@ Completed milestones:
   persistence.
 - Graph loading no longer doubles every saved edge cost, malformed files do not
   destroy the current graph, and references to missing nodes are rejected.
-- The complete workspace currently reports 31 passing tests with no failures.
+- The connectivity-graph milestone brought the workspace to 31 passing tests.
+- `FrontierFinder` now consumes the migrated TSDF/occupancy map, detects and
+  clusters free/unknown boundaries, samples viewpoints with the ROS 2 sensor
+  model, and classifies active, dormant, and tiny frontiers.
+- A synthetic point-cloud regression test exercises the real TSDF update and
+  frontier-search path. Degenerate sampling radii and other invalid parameters
+  are rejected before the search begins.
+- Empty hierarchical cell-height input is handled safely, and low-resolution
+  cluster thresholds are clamped instead of collapsing to zero.
+- The complete workspace currently reports 34 passing tests with no failures.
 
-The next targets are `frontier_finder` and `hierarchical_grid`, followed by
-exploration-manager integration and the complete ROS 2 launch graph.
+The next target is `hierarchical_grid`, followed by exploration-manager
+integration and the complete ROS 2 launch graph.
 
 Validation commands:
 
