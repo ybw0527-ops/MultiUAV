@@ -60,6 +60,10 @@ TEST(NonUniformBsplineTest, InterpolatesWaypointsAndBoundaryDerivatives) {
   NonUniformBspline velocity = spline.getDerivative();
   EXPECT_TRUE(velocity.evaluateDeBoorT(0.0).isApprox(derivatives[0], 1e-9));
   EXPECT_TRUE(velocity.evaluateDeBoorT(3.0).isApprox(derivatives[1], 1e-9));
+  NonUniformBspline acceleration = velocity.getDerivative();
+  NonUniformBspline jerk = acceleration.getDerivative();
+  EXPECT_TRUE(jerk.evaluateDeBoorT(0.0).allFinite());
+  EXPECT_TRUE(jerk.evaluateDeBoorT(3.0).allFinite());
 
   spline.setPhysicalLimits(2.0, 2.0);
   EXPECT_TRUE(spline.checkFeasibility());

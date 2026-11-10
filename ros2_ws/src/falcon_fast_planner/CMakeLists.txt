@@ -12,12 +12,18 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(falcon_exploration_utils REQUIRED)
+find_package(falcon_interfaces REQUIRED)
 find_package(falcon_pathfinding REQUIRED)
 find_package(falcon_trajectory REQUIRED)
 find_package(falcon_voxel_mapping REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
-add_library(${PROJECT_NAME} SHARED src/planner_manager.cpp)
+add_library(${PROJECT_NAME} SHARED
+  src/planner_manager.cpp
+  src/trajectory_server.cpp
+)
 target_include_directories(${PROJECT_NAME}
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -26,11 +32,18 @@ target_include_directories(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME} PUBLIC Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME} PUBLIC
   falcon_exploration_utils
+  falcon_interfaces
   falcon_pathfinding
   falcon_trajectory
   falcon_voxel_mapping
   rclcpp
+  std_msgs
+  visualization_msgs
 )
+
+add_executable(trajectory_server_node src/trajectory_server_node.cpp)
+target_link_libraries(trajectory_server_node ${PROJECT_NAME})
+ament_target_dependencies(trajectory_server_node rclcpp)
 
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
@@ -42,15 +55,19 @@ install(
   RUNTIME DESTINATION bin
   INCLUDES DESTINATION include
 )
+install(TARGETS trajectory_server_node DESTINATION lib/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   Eigen3
   falcon_exploration_utils
+  falcon_interfaces
   falcon_pathfinding
   falcon_trajectory
   falcon_voxel_mapping
   rclcpp
+  std_msgs
+  visualization_msgs
 )
 
 if(BUILD_TESTING)
@@ -58,6 +75,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_planner_manager test/test_planner_manager.cpp)
   target_link_libraries(test_planner_manager ${PROJECT_NAME})
   ament_target_dependencies(test_planner_manager rclcpp)
+
+  ament_add_gtest(test_trajectory_server test/test_trajectory_server.cpp)
+  target_link_libraries(test_trajectory_server ${PROJECT_NAME})
+  ament_target_dependencies(test_trajectory_server falcon_interfaces rclcpp)
 endif()
 
 ament_package()

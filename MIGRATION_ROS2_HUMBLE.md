@@ -117,10 +117,20 @@ Completed milestones:
 - Multi-segment timing is now initialized deterministically. The upstream code
   left intermediate segment times uninitialized for tours containing more than
   three points.
-- The complete workspace currently reports 24 passing tests with no failures.
+- The planner-manager milestone brought the workspace to 24 passing tests.
+- `trajectory_server_node` accepts migrated `falcon_interfaces/Bspline`
+  messages, samples position/velocity/acceleration/jerk/yaw commands at 100 Hz,
+  and publishes native ROS 2 `PositionCommand` messages and debug markers.
+- Initial positioning is a non-blocking timer state machine. B-spline messages
+  are rejected when IDs, dimensions, knots, timestamps, or finite-value checks
+  are invalid, and command sampling is mutex-protected for multithreaded
+  executors.
+- Trajectory-server tests cover normal command sampling, final-state holding,
+  pre-start behavior, malformed messages, and misordered trajectory IDs.
+- The complete workspace currently reports 27 passing tests with no failures.
 
-The next target is the ROS 2 trajectory-server runtime and its planner message
-contract, followed by exploration-manager integration.
+The next target is exploration-manager integration and the ROS 2 launch graph
+that connects planning, trajectory execution, mapping, and the simulator.
 
 Validation commands:
 
@@ -139,6 +149,9 @@ ros2 run falcon_voxel_mapping map_server_node --ros-args \
   --params-file src/falcon_voxel_mapping/config/voxel_mapping.yaml
 
 ros2 launch falcon_voxel_mapping map_server.launch.py
+
+ros2 run falcon_fast_planner trajectory_server_node --ros-args \
+  --params-file src/falcon_fast_planner/config/fast_planner.yaml
 ```
 
 ## Ubuntu 22.04 compatibility notes
@@ -172,6 +185,9 @@ ros2 launch falcon_voxel_mapping map_server.launch.py
 - The planner validates finite, distinct tour points and nonnegative time lower
   bounds before trajectory construction. Timing and optimization profiling use
   a monotonic clock so simulation-time changes do not corrupt measurements.
+- B-spline evaluation is const-correct and permits the mathematically valid
+  zero-degree spline produced by taking the third derivative of a cubic
+  trajectory. Negative-degree splines remain invalid.
 
 ## Known upstream issues to preserve or address explicitly
 

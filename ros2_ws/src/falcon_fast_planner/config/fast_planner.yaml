@@ -4,6 +4,16 @@
       dynamics_parameters:
         max_linear_velocity: 2.0
         max_linear_acceleration: 2.0
+      sensing_parameters:
+        fov:
+          horizontal: 1.500983156
+          vertical: 0.994837674
+
+    map_config:
+      init_x: 0.0
+      init_y: 0.0
+      init_z: 0.0
+      init_yaw: 0.0
 
     fast_planner:
       control_points_distance: 0.5
@@ -27,3 +37,17 @@
         start: 50.0
         end: 50.0
         waypoint: 50.0
+
+    perception_utils:
+      fov_type: pinhole
+      max_dist: 5.0
+      vis_dist: 1.0
+
+    traj_server:
+      world_frame: world
+      perform_initial_motion: true
+      init_dx: 1.0
+      init_dy: 0.0
+      init_dz: 1.0
+      kx: [5.7, 5.7, 6.2]
+      kv: [3.4, 3.4, 4.0]

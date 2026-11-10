@@ -14,7 +14,7 @@ NonUniformBspline::~NonUniformBspline() {}
 
 void NonUniformBspline::setUniformBspline(const Eigen::MatrixXd &points, const int &order,
                                           const double &interval) {
-  if (order < 1 || points.rows() <= order || points.cols() < 1 || interval <= 0.0)
+  if (order < 0 || points.rows() <= order || points.cols() < 1 || interval <= 0.0)
     throw std::invalid_argument("Invalid control points, degree, or knot interval");
 
   control_points_ = points;
@@ -44,7 +44,7 @@ void NonUniformBspline::getTimeSpan(double &um, double &um_p) {
 
 Eigen::MatrixXd NonUniformBspline::getControlPoint() { return control_points_; }
 
-Eigen::VectorXd NonUniformBspline::evaluateDeBoor(const double &u) {
+Eigen::VectorXd NonUniformBspline::evaluateDeBoor(const double &u) const {
   double ub = min(max(u_(p_), u), u_(m_ - p_));
 
   // Determine which [uk,uk+1] does u lay in
@@ -66,7 +66,7 @@ Eigen::VectorXd NonUniformBspline::evaluateDeBoor(const double &u) {
   return d[p_];
 }
 
-Eigen::VectorXd NonUniformBspline::evaluateDeBoorT(const double &t) {
+Eigen::VectorXd NonUniformBspline::evaluateDeBoorT(const double &t) const {
   return evaluateDeBoor(t + u_(p_));
 }
 

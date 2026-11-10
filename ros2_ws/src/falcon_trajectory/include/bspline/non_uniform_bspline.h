@@ -28,8 +28,8 @@ public:
   void getTimeSpan(double& um, double& um_p);
 
   // compute position / derivative
-  Eigen::VectorXd evaluateDeBoor(const double& u);   // use u in [up, u_mp]
-  Eigen::VectorXd evaluateDeBoorT(const double& t);  // use t in [0, duration]
+  Eigen::VectorXd evaluateDeBoor(const double& u) const;   // use u in [up, u_mp]
+  Eigen::VectorXd evaluateDeBoorT(const double& t) const;  // use t in [0, duration]
   void computeDerivatives(const int& k, vector<NonUniformBspline>& ders);
   NonUniformBspline getDerivative();
   void getBoundaryStates(const int& ks, const int& ke, vector<Eigen::Vector3d>& start,
