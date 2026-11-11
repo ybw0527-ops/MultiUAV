@@ -139,6 +139,7 @@ private:
   double ground_height_{0.0}, ground_offset_{0.1};
   double viewpoint_z_score_cutoff_{0.0};
   double cell_height_clearance_{0.1};
+  double boundary_clearance_{0.3};
   vector<double> cell_heights_;
 
   // Utils

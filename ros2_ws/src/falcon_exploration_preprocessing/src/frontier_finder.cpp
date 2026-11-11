@@ -46,6 +46,7 @@ FrontierFinder::FrontierFinder(rclcpp::Node &node, const shared_ptr<MapServer> &
   readParameter(node, "frontier_finder.min_view_finish_fraction", min_view_finish_fraction_,
                 min_view_finish_fraction_);
   readParameter(node, "frontier_finder.ground_height", ground_height_, ground_height_);
+  readParameter(node, "bspline_opt.boundary_clearance", boundary_clearance_, boundary_clearance_);
   readParameter(node, "frontier_finder.ground_offset", ground_offset_, ground_offset_);
   readParameter(node, "frontier_finder.viewpoint_z_score_cutoff", viewpoint_z_score_cutoff_,
                 viewpoint_z_score_cutoff_);
@@ -54,6 +55,7 @@ FrontierFinder::FrontierFinder(rclcpp::Node &node, const shared_ptr<MapServer> &
 
   const bool invalid = cluster_min_ <= 0 || cluster_size_xy_ <= 0.0 || cluster_size_z_ <= 0.0 ||
                        min_candidate_dist_ < 0.0 || min_candidate_clearance_ < 0.0 ||
+                       !std::isfinite(boundary_clearance_) || boundary_clearance_ < 0.0 ||
                        min_candidate_occupied_clearance_ < 0.0 || candidate_dphi_ <= 0.0 ||
                        candidate_rmin_ <= 0.0 || candidate_rmax_ <= candidate_rmin_ ||
                        candidate_rnum_ <= 0 || down_sample_ <= 0 || min_visib_num_ < 0 ||
@@ -742,6 +744,8 @@ void FrontierFinder::sampleViewpoints(Frontier &frontier) {
 
       // Qualified viewpoint is in bounding box and in safe region
       if (!map_server_->isInBox(sample_pos) ||
+          (sample_pos.array() < map_server_->getTSDF()->map_config_.box_min_.array() + boundary_clearance_).any() ||
+          (sample_pos.array() > map_server_->getTSDF()->map_config_.box_max_.array() - boundary_clearance_).any() ||
           map_server_->getOccupancy(sample_pos) == voxel_mapping::OccupancyType::OCCUPIED ||
           map_server_->getOccupancy(sample_pos) == voxel_mapping::OccupancyType::UNKNOWN ||
           isNearUnknown(sample_pos))
@@ -901,6 +905,8 @@ void FrontierFinder::sampleViewpoints3D(Frontier &frontier) {
 
         // Qualified viewpoint is in bounding box and in safe region
         if (!map_server_->isInBox(sample_pos) ||
+          (sample_pos.array() < map_server_->getTSDF()->map_config_.box_min_.array() + boundary_clearance_).any() ||
+          (sample_pos.array() > map_server_->getTSDF()->map_config_.box_max_.array() - boundary_clearance_).any() ||
             map_server_->getOccupancy(sample_pos) == voxel_mapping::OccupancyType::OCCUPIED ||
             map_server_->getOccupancy(sample_pos) == voxel_mapping::OccupancyType::UNKNOWN ||
             isNearUnknown(sample_pos))

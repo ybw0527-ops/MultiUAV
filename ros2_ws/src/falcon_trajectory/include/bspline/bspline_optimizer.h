@@ -101,6 +101,7 @@ private:
   double pos_end_{50.0}, pos_time_{3.0};
   double yaw_smooth_{50.0}, yaw_start_{50.0}, yaw_end_{50.0}, yaw_waypt_{50.0};
   double safe_distance_{0.7};      // safe distance
+  double boundary_clearance_{0.3}; // vehicle center margin inside task box
   double max_vel_{1.0}, max_acc_{1.0};  // dynamic limits for pos
   int max_iteration_num_{1000};     // stopping criteria that can be used
   double max_iteration_time_{0.01}; // stopping criteria that can be used

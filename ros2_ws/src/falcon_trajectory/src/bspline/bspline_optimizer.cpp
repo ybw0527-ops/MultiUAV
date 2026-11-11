@@ -68,6 +68,7 @@ void BsplineOptimizer::setParam(rclcpp::Node &node) {
 
   readParameter(node, "bspline_opt.bspline_degree", bspline_degree_, 3);
   readParameter(node, "bspline_opt.safe_distance", safe_distance_, 0.7);
+  readParameter(node, "bspline_opt.boundary_clearance", boundary_clearance_, 0.3);
   readParameter(node, "bspline_opt.max_iteration_num", max_iteration_num_, 1000);
   readParameter(node, "bspline_opt.max_iteration_time", max_iteration_time_, 0.01);
 
@@ -76,6 +77,7 @@ void BsplineOptimizer::setParam(rclcpp::Node &node) {
                                yaw_smooth_ < 0.0 || yaw_start_ < 0.0 || yaw_end_ < 0.0 ||
                                yaw_waypt_ < 0.0;
   if (invalid_weights || bspline_degree_ < 1 || safe_distance_ < 0.0 ||
+      !std::isfinite(boundary_clearance_) || boundary_clearance_ < 0.0 ||
       max_iteration_num_ <= 0 || max_iteration_time_ <= 0.0)
     throw std::invalid_argument("Invalid B-spline optimizer parameters");
 
@@ -219,7 +221,7 @@ void BsplineOptimizer::optimize() {
   Eigen::Vector3d bmin, bmax;
   map_server_->getBox(bmin, bmax);
   // ESDF interpolation queries the two neighboring voxel centers on each axis.
-  const double interpolation_margin = std::max(0.1, 0.5 * map_server_->getResolution() + 1e-4);
+  const double interpolation_margin = std::max(boundary_clearance_, 0.5 * map_server_->getResolution() + 1e-4);
   for (int k = 0; k < 3; ++k) {
     bmin[k] += interpolation_margin;
     bmax[k] -= interpolation_margin;

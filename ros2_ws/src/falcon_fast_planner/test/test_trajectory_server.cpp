@@ -1,6 +1,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include <gtest/gtest.h>
 #include <rclcpp/rclcpp.hpp>
@@ -107,6 +108,43 @@ TEST(TrajectoryServerTest, RejectsMalformedAndMisorderedTrajectories) {
   message.knots.pop_back();
   EXPECT_FALSE(server->setTrajectory(message, &error));
   EXPECT_NE(error.find("knot count"), std::string::npos);
+}
+
+TEST(TrajectoryServerTest, HoldsLastPositionWhileReplacementStartsInFuture) {
+  ensureRosInitialized();
+  auto server = std::make_shared<TrajectoryServer>(serverOptions());
+  auto observer = std::make_shared<rclcpp::Node>("hold_command_test");
+  falcon_interfaces::msg::PositionCommand last;
+  int count=0;
+  auto subscription=observer->create_subscription<falcon_interfaces::msg::PositionCommand>(
+      "/planning/pos_cmd", 10, [&](falcon_interfaces::msg::PositionCommand::ConstSharedPtr msg) {
+        last=*msg; ++count;
+      });
+  auto message=makeTrajectoryMessage(server->now()-rclcpp::Duration::from_seconds(4.0));
+  ASSERT_TRUE(server->setTrajectory(message));
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(server); executor.add_node(observer);
+  auto until=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+  while(count<3 && std::chrono::steady_clock::now()<until) {
+    executor.spin_some(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_GE(count,3);
+  const auto held=last.position;
+  ASSERT_GT(held.x,1.0);
+  message.traj_id++;
+  message.start_time=server->now()+rclcpp::Duration::from_seconds(5.0);
+  ASSERT_TRUE(server->setTrajectory(message));
+  const int initial_count=count;
+  until=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+  while(count<initial_count+5 && std::chrono::steady_clock::now()<until) {
+    executor.spin_some(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_GE(count,initial_count+5);
+  EXPECT_DOUBLE_EQ(last.position.x,held.x);
+  EXPECT_DOUBLE_EQ(last.position.y,held.y);
+  EXPECT_DOUBLE_EQ(last.position.z,held.z);
+  EXPECT_DOUBLE_EQ(last.velocity.x,0.0);
+  EXPECT_DOUBLE_EQ(last.acceleration.x,0.0);
 }
 
 } // namespace

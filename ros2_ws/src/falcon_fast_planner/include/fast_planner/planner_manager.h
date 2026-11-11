@@ -17,6 +17,7 @@ namespace fast_planner {
 struct PlanParameters {
   double max_vel_{0.0}, max_acc_{0.0}; // physical limits
   double ctrl_pt_dist_{0.0};           // distance between adjacent B-spline control points
+  double boundary_clearance_{0.3};
 };
 
 struct LocalTrajData {

@@ -1,0 +1,209 @@
+{
+  "description": "Observed live regression results, not exact numerical expectations.",
+  "duration_per_map_sec": 60,
+  "vehicle_radius_m": 0.2,
+  "unit_checks": {
+    "total": 49,
+    "failures": 0
+  },
+  "limits": [
+    "Ideal command-to-odometry execution; no SO3/dynamics tracking.",
+    "Point-cloud distances cover supplied samples; sparse missing surfaces are uncertified.",
+    "FSM FINISH permits dormant frontiers and does not certify full map coverage.",
+    "Speed and acceleration feasibility costs remain soft; recorded maxima are not hard-limit checks."
+  ],
+  "maps": [
+    {
+      "map": "duplex_office",
+      "trajectories": 82,
+      "commands": 5408,
+      "invalid_commands": 0,
+      "coverage_start": 48.9375,
+      "coverage_final": 756.078125,
+      "distance": 82.80899090039627,
+      "command_jumps": 0,
+      "max_command_step": 0.05224123542878514,
+      "max_speed": 3.180143429112216,
+      "max_acceleration": 5.950583849953289,
+      "requested_duration_sec": 60,
+      "frontier_points": {
+        "active": 34263,
+        "dormant": 9693,
+        "tiny": 8991
+      },
+      "first_plan_sec": 3.9458803559973603,
+      "last_motion_sec": 60.00470145899453,
+      "fsm_finished": false,
+      "elapsed_sec": 60.005256698990706,
+      "task_box_volume": 1600,
+      "known_task_box_fraction": 0.472548828125,
+      "ground_truth": {
+        "clearance_lower_bound": 0.3610261008,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": true
+      },
+      "passed": true
+    },
+    {
+      "map": "complex_office",
+      "trajectories": 92,
+      "commands": 5403,
+      "invalid_commands": 0,
+      "coverage_start": 53.203125,
+      "coverage_final": 820.140625,
+      "distance": 92.76938638262176,
+      "command_jumps": 0,
+      "max_command_step": 0.05822238252662879,
+      "max_speed": 3.1551237237690533,
+      "max_acceleration": 5.2218938623304325,
+      "requested_duration_sec": 60,
+      "frontier_points": {
+        "active": 15795,
+        "dormant": 13446,
+        "tiny": 324
+      },
+      "first_plan_sec": 3.9463228009990416,
+      "last_motion_sec": 60.00084197999968,
+      "fsm_finished": false,
+      "elapsed_sec": 60.001432605000446,
+      "task_box_volume": 1800,
+      "known_task_box_fraction": 0.45563368055555553,
+      "ground_truth": {
+        "clearance_lower_bound": 0.2842851044,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": true
+      },
+      "passed": true
+    },
+    {
+      "map": "classical_office",
+      "trajectories": 104,
+      "commands": 5391,
+      "invalid_commands": 0,
+      "coverage_start": 39.890625,
+      "coverage_final": 758.921875,
+      "distance": 85.26584755924675,
+      "command_jumps": 0,
+      "max_command_step": 0.06276855144280553,
+      "max_speed": 3.259870502858643,
+      "max_acceleration": 4.635056939042917,
+      "requested_duration_sec": 60,
+      "frontier_points": {
+        "active": 9666,
+        "dormant": 14823,
+        "tiny": 26271
+      },
+      "first_plan_sec": 3.960565397006576,
+      "last_motion_sec": 59.98865689100057,
+      "fsm_finished": false,
+      "elapsed_sec": 60.00020341599884,
+      "task_box_volume": 900,
+      "known_task_box_fraction": 0.8432465277777778,
+      "ground_truth": {
+        "clearance_lower_bound": 0.47903329,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": false
+      },
+      "passed": true
+    },
+    {
+      "map": "octa_maze",
+      "trajectories": 85,
+      "commands": 5403,
+      "invalid_commands": 0,
+      "coverage_start": 58.21875,
+      "coverage_final": 801.484375,
+      "distance": 78.55617851372841,
+      "command_jumps": 0,
+      "max_command_step": 0.0912003009089538,
+      "max_speed": 2.488666754924259,
+      "max_acceleration": 6.967014492292137,
+      "requested_duration_sec": 60,
+      "frontier_points": {
+        "active": 34506,
+        "dormant": 31671,
+        "tiny": 11826
+      },
+      "first_plan_sec": 4.484114011997008,
+      "last_motion_sec": 59.992447380005615,
+      "fsm_finished": false,
+      "elapsed_sec": 60.000257791005424,
+      "task_box_volume": 2394.32,
+      "known_task_box_fraction": 0.3347440505028567,
+      "ground_truth": {
+        "clearance_lower_bound": 0.3776539081,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": true
+      },
+      "passed": true
+    },
+    {
+      "map": "darpa_tunnel",
+      "trajectories": 35,
+      "commands": 5393,
+      "invalid_commands": 0,
+      "coverage_start": 52.09375,
+      "coverage_final": 310.578125,
+      "distance": 45.579665971625566,
+      "command_jumps": 0,
+      "max_command_step": 0.04816058596610983,
+      "max_speed": 3.672134186520169,
+      "max_acceleration": 6.326718433824815,
+      "requested_duration_sec": 60,
+      "frontier_points": {
+        "active": 0,
+        "dormant": 79245,
+        "tiny": 7911
+      },
+      "first_plan_sec": 3.9716003989888122,
+      "last_motion_sec": 29.791568198997993,
+      "fsm_finished": true,
+      "elapsed_sec": 60.0016602199903,
+      "task_box_volume": 1680,
+      "known_task_box_fraction": 0.18486793154761905,
+      "ground_truth": {
+        "clearance_lower_bound": 0.3660676744,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": false
+      },
+      "passed": true
+    },
+    {
+      "map": "power_plant",
+      "trajectories": 25,
+      "commands": 5400,
+      "invalid_commands": 0,
+      "coverage_start": 63.52000045776367,
+      "coverage_final": 607.656005859375,
+      "distance": 35.751943299501335,
+      "command_jumps": 0,
+      "max_command_step": 0.043650769819749656,
+      "max_speed": 3.2501042880418267,
+      "max_acceleration": 47.9455483144428,
+      "requested_duration_sec": 60,
+      "frontier_points": {
+        "active": 33072,
+        "dormant": 5936,
+        "tiny": 816
+      },
+      "first_plan_sec": 4.708406756006298,
+      "last_motion_sec": 60.002145425998606,
+      "fsm_finished": false,
+      "elapsed_sec": 60.002438901996356,
+      "task_box_volume": 5670,
+      "known_task_box_fraction": 0.10717037140376984,
+      "ground_truth": {
+        "clearance_lower_bound": 0.7074534804,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": false
+      },
+      "passed": true
+    }
+  ]
+}

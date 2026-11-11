@@ -10,6 +10,7 @@
 #include <visualization_msgs/msg/marker.hpp>
 
 #include "exploration_manager/exploration_manager.h"
+#include <numeric>
 #include "exploration_manager/exploration_data.h"
 #include "exploration_preprocessing/frontier_finder.h"
 #include "fast_planner/planner_manager.h"
@@ -178,9 +179,6 @@ int ExplorationManager::planExploreMotionHGrid(const Vector3d &pos, const Vector
   int next_center_id = -1;
   Position next_grid_pos;
 
-  Position next_next_pos;
-  double next_next_yaw;
-  bool enable_next_next_pos = false;
 
   Eigen::MatrixXd cost_matrix2;
   vector<double> grid_tour2_cost;
@@ -930,9 +928,6 @@ int ExplorationManager::planExploreMotionHGrid(const Vector3d &pos, const Vector
       next_yaw = refined_yaws[0];
     }
 
-    next_next_pos = ed_->refined_points_[1];
-    next_next_yaw = refined_yaws[1];
-    enable_next_next_pos = true;
 
     // // HACK Code, to bypass the refinement
     // next_pos = ed_->points_[frontier_ids[0]];
@@ -980,7 +975,25 @@ int ExplorationManager::planExploreMotionHGrid(const Vector3d &pos, const Vector
   // Require next_pos, next_yaw from global planner
   // pos, vel, acc, yaw: current states
   if (planTrajToView(pos, vel, acc, yaw, next_pos, next_yaw) == FAIL) {
-    return FAIL;
+    // Coarse grid connectivity can favor a locally unreachable frontier. Try
+    // another observed viewpoint instead of retrying the same failed goal forever.
+    std::vector<size_t> alternatives(ed_->points_.size());
+    std::iota(alternatives.begin(), alternatives.end(), 0);
+    std::sort(alternatives.begin(), alternatives.end(), [&](size_t a, size_t b) {
+      return (ed_->points_[a]-pos).squaredNorm() < (ed_->points_[b]-pos).squaredNorm();
+    });
+    bool recovered = false;
+    for (const size_t id : alternatives) {
+      if ((ed_->points_[id]-next_pos).norm() < 1e-3) continue;
+      if (planTrajToView(pos, vel, acc, yaw, ed_->points_[id], ed_->yaws_[id]) != SUCCEED) continue;
+      ed_->next_pos_ = ed_->points_[id];
+      ed_->next_yaw_ = ed_->yaws_[id];
+      ed_->refined_tour_ = {pos, ed_->next_pos_};
+      RCLCPP_WARN(node_->get_logger(), "[ExplorationManager] Recovered using reachable frontier %zu", id);
+      recovered = true;
+      break;
+    }
+    if (!recovered) return FAIL;
   }
 
   // Time analysis for total planning
@@ -1015,7 +1028,16 @@ EXPL_RESULT ExplorationManager::planTrajToView(const Vector3d &pos, const Vector
                                                      const double &next_yaw) {
   // RCLCPP_INFO(node_->get_logger(), "[ExplorationManager] planTrajToView next yaw: %.2lf", next_yaw);
 
-  if ((pos - next_pos).norm() < 1e-2 && fabs(yaw[0] - next_yaw) < 1e-2) {
+  if (!pos.allFinite() || !vel.allFinite() || !acc.allFinite() || !yaw.allFinite() ||
+      !next_pos.allFinite() || !std::isfinite(next_yaw)) return FAIL;
+  Eigen::Vector3d bmin, bmax;
+  map_server_->getBox(bmin, bmax);
+  const double margin = planner_manager_->pp_.boundary_clearance_;
+  if ((next_pos.array() < bmin.array() + margin).any() ||
+      (next_pos.array() > bmax.array() - margin).any()) return FAIL;
+  // Replanning samples an unwrapped yaw spline, potentially many full turns away.
+  const double yaw_distance = std::abs(std::remainder(next_yaw - yaw[0], 2.0 * M_PI));
+  if ((pos - next_pos).norm() < 1e-2 && yaw_distance < 1e-2) {
     RCLCPP_ERROR(node_->get_logger(), "[ExplorationManager] planTrajToView: next_pos and next_yaw are the same as "
               "current pos and yaw");
     // CHECK(false) << "next_pos and next_yaw are the same as current pos and yaw";
@@ -1026,8 +1048,7 @@ EXPL_RESULT ExplorationManager::planTrajToView(const Vector3d &pos, const Vector
   auto t1 = rclcpp::Clock(RCL_STEADY_TIME).now();
 
   // Compute time lower bound of yaw and use in trajectory generation
-  double diff = fabs(next_yaw - yaw[0]);
-  double time_lb = min(diff, 2 * M_PI - diff) / PathCostEvaluator::yd_;
+  const double time_lb = yaw_distance / PathCostEvaluator::yd_;
 
   Vector3d next_pos_local = next_pos;
   double next_yaw_local = next_yaw;

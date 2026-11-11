@@ -66,9 +66,14 @@ private:
   bool frontier_ready_;
 
   rclcpp::Time trajectory_start_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_odom_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time stop_requested_time_{0, 0, RCL_ROS_TIME};
+  bool waiting_for_stop_{false};
+  double publication_margin_{0.2};
 
   /* helper functions */
   int callExplorationPlanner();
+  void stopAndWaitForOdometry();
   void transitState(EXPL_STATE new_state, string pos_call);
 
   /* ROS functions */

@@ -77,7 +77,7 @@ double PathCostEvaluator::computePathCost(const Vector3d &p1, const Vector3d &p2
 
   // Cost of yaw change
   double diff = fabs(y2 - y1);
-  diff = min(diff, 2 * M_PI - diff);
+  diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   double yaw_cost = 0.0;
   if (diff < 0.5 * yd_ * yd_ / ydd_)
     yaw_cost = sqrt(2 * diff / ydd_);
@@ -310,11 +310,11 @@ double PathCostEvaluator::computeCost(const Vector3d &p1, const Vector3d &p2, co
 
   // // Cost of yaw change
   // double diff = fabs(y2 - y1);
-  // diff = min(diff, 2 * M_PI - diff);
+  // diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   // double yaw_cost = diff / yd_;
   // Cost of yaw change
   double diff = fabs(y2 - y1);
-  diff = min(diff, 2 * M_PI - diff);
+  diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   double yaw_cost = 0.0;
   if (diff < 0.5 * yd_ * yd_ / ydd_)
     yaw_cost = sqrt(2 * diff / ydd_);
@@ -378,7 +378,7 @@ double PathCostEvaluator::computeCostBBox(const Vector3d &p1, const Vector3d &p2
 
   // Cost of yaw change
   double diff = fabs(y2 - y1);
-  diff = min(diff, 2 * M_PI - diff);
+  diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   double yaw_cost = 0.0;
   if (diff < 0.5 * yd_ * yd_ / ydd_)
     yaw_cost = sqrt(2 * diff / ydd_);
@@ -426,12 +426,12 @@ double PathCostEvaluator::computeCostUnknownBBox(const Vector3d &p1, const Vecto
 
   // // Cost of yaw change
   // double diff = fabs(y2 - y1);
-  // diff = min(diff, 2 * M_PI - diff);
+  // diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   // double yaw_cost = diff / yd_;
 
   // Cost of yaw change
   double diff = fabs(y2 - y1);
-  diff = min(diff, 2 * M_PI - diff);
+  diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   double yaw_cost = 0.0;
   if (diff < 0.5 * yd_ * yd_ / ydd_)
     yaw_cost = sqrt(2 * diff / ydd_);
@@ -465,12 +465,12 @@ double PathCostEvaluator::computeCostUnknownOnlyBBox(const Vector3d &p1, const V
 
   // // Cost of yaw change
   // double diff = fabs(y2 - y1);
-  // diff = min(diff, 2 * M_PI - diff);
+  // diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   // double yaw_cost = diff / yd_;
 
   // Cost of yaw change
   double diff = fabs(y2 - y1);
-  diff = min(diff, 2 * M_PI - diff);
+  diff = std::abs(std::remainder(diff, 2.0 * M_PI));
   double yaw_cost = 0.0;
   if (diff < 0.5 * yd_ * yd_ / ydd_)
     yaw_cost = sqrt(2 * diff / ydd_);

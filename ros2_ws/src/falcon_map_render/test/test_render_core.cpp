@@ -52,3 +52,27 @@ TEST(RenderCore, LoadsAllSixUpstreamMaps) {
     EXPECT_GT(scene.primitiveCount(),0U);
   }
 }
+
+TEST(RenderCore, GroundTruthClearanceIncludesTriangleInteriorEdgesAndDegenerateFaces) {
+  Scene scene;
+  scene.setTriangles({{{0,0,0},{2,0,0},{0,2,0}}, {{5,0,0},{5,0,0},{5,0,0}}});
+  EXPECT_NEAR(scene.clearance({0.5,0.5,1}),1.0,1e-12);
+  EXPECT_NEAR(scene.clearance({1,-1,0}),1.0,1e-12);
+  EXPECT_NEAR(scene.clearance({3,3,0}),std::sqrt(8.0),1e-12);
+  EXPECT_NEAR(scene.clearance({5,0,0.3}),0.3,1e-12);
+  EXPECT_NEAR(scene.clearance({0.5,0.5,0}),0.0,1e-12);
+  EXPECT_THROW(scene.clearance({NAN,0,0}),std::invalid_argument);
+  std::vector<Eigen::Vector3d> points;
+  for(int i=0;i<100;++i) points.emplace_back(i,0,0);
+  scene.setPoints(points);
+  EXPECT_NEAR(scene.clearance({50,0,0.4}),0.4,1e-12);
+  EXPECT_NEAR(scene.clearance({-1,0,0}),1.0,1e-12);
+  std::vector<Triangle> triangles;
+  for(int i=0;i<100;++i) {
+    const double z=i*0.1;
+    triangles.push_back({{-10,-10,z},{10,-10,z},{0,10,z}});
+  }
+  scene.setTriangles(triangles);
+  EXPECT_NEAR(scene.clearance({0,0,5.03}),0.03,1e-12);
+  EXPECT_NEAR(scene.clearance({0,0,-0.4}),0.4,1e-12);
+}

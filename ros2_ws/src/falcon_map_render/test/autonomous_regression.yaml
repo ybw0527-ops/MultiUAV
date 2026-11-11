@@ -1,0 +1,25 @@
+/**:
+  ros__parameters:
+    uav_model:
+      sensing_parameters:
+        image_width: 160
+        image_height: 120
+        camera_intrinsics:
+          fx: 80.0
+          fy: 80.0
+          cx: 80.0
+          cy: 60.0
+    voxel_mapping:
+      resolution_fine: 0.25
+      resolution_coarse: 0.5
+      skip_pixel: 2
+      publish_tsdf: false
+      publish_esdf: false
+      publish_occupancy_grid: false
+      publish_tsdf_slice: false
+      publish_esdf_slice: false
+      publish_occupancy_grid_slice: false
+    map_render:
+      render_rate: 10.0
+    exploration_manager:
+      auto_start: true

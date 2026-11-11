@@ -267,12 +267,21 @@ void TrajectoryServer::commandTimerCallback() {
   falcon_interfaces::msg::PositionCommand command;
   const rclcpp::Time sample_time = now();
   if (!sampleCommand(sample_time, command)) {
-    command = command_template_;
+    command = has_last_command_ ? last_command_ : command_template_;
     command.header.stamp = sample_time;
+    command.velocity = geometry_msgs::msg::Vector3();
+    command.acceleration = geometry_msgs::msg::Vector3();
+    command.jerk = geometry_msgs::msg::Vector3();
+    command.yaw_dot = 0.0;
+    if (hasTrajectory())
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                          "Trajectory sample unavailable; holding last valid command");
     position_command_pub_->publish(command);
     return;
   }
 
+  last_command_ = command;
+  has_last_command_ = true;
   position_command_pub_->publish(command);
   publishFieldOfView(Eigen::Vector3d(command.position.x, command.position.y, command.position.z),
                      command.yaw);

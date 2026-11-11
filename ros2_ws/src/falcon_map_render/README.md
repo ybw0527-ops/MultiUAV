@@ -59,18 +59,56 @@ nonfinite points, and invalid odometry are handled explicitly.
 
 Validation from the sourced workspace:
 
+The recorded baseline is `test/autonomous_run_summary.json`: all six 60-second
+runs passed, with geometry clearance lower bounds of 0.284-0.707 m. The complete
+workspace reported 49 passing colcon checks. These are observed runs, not exact
+numerical expectations for later runs.
+
 ```bash
 cd ros2_ws
 colcon test --packages-select falcon_map_render
 colcon test-result --verbose
 python3 src/falcon_map_render/test/sensor_regression.py
 python3 src/falcon_map_render/test/pipeline_smoke.py
+python3 src/falcon_map_render/test/autonomous_regression.py --map all --duration 60
 ```
 
 Unit tests cover occlusion, axial depth, camera motion, near/far clipping, point
-projection, input rejection, BVH traversal, and loading the six original maps.
+projection, input rejection, BVH traversal, nearest geometry distance, and loading
+the six original maps.
 The sensor regression checks actual depth hits, paired pose timestamps, and
 nonzero fused coverage volume for each map. The full graph test additionally
-requires a nonempty frontier output. These bounded checks do not establish
-complete autonomous exploration, collision-free mission completion, or six-map
-coverage targets.
+requires a nonempty frontier output.
+
+The autonomous regression starts the complete graph with automatic exploration.
+It publishes a shared `/clock` from monotonic elapsed time and gives each map a
+fresh process and ROS domain. It requires at least two trajectories, more than
+one meter of motion after the first plan, increased known volume, finite flight
+commands, no position jump larger than `0.5 + 3*dt` meters, and no node failure or
+rejected trajectory. A run must keep moving during its final 15 seconds unless
+the FSM has announced completion. It saves logs, sampled positions, and JSON metrics under
+`/tmp/falcon_autonomous` (change with `--output`). `fsm_finished` records whether
+the FSM announced completion; a bounded run can pass while exploration continues.
+Completion of the FSM means no active frontiers remain; dormant frontiers can
+still exist, so this is not a complete-coverage certificate.
+The test uses a 160x120 camera, 0.25 m mapping, and 0.5 m coarse mapping. Power plant
+uses the original 0.1/0.2 m resolutions and all pixels because the coarse setting
+could not generate a usable initial viewpoint in that environment. Its sensor
+runs at 3 Hz to match fine-map CPU fusion throughput; the other maps use 10 Hz.
+
+The standalone `check_clearance` executable checks the recorded path against
+original world-transformed mesh triangles or point samples, independently of the
+fused occupancy map. It checks a 0.2 m vehicle radius, samples each polyline segment
+at intervals no larger than 0.025 m, and subtracts half the interval to give a
+conservative continuous-polyline clearance bound. Mesh queries include triangle
+interiors, edges, and vertices. Point-cloud distances apply to the supplied point
+samples; missing geometry in a sparse cloud cannot be certified. Checks begin at
+the first exploration trajectory and exclude the initial positioning maneuver.
+
+Known volume is measured within the task box in cubic meters. The reported
+`known_task_box_fraction` divides it by box volume, including inaccessible solid
+space; it is not a percentage of reachable free space. These tests use ideal
+command-to-odometry execution and do not establish SO3/dynamics tracking, strict
+dynamic feasibility, or complete six-map mission coverage targets.
+The upstream feasibility costs are soft and per axis; acceleration spikes can
+still occur. The recorded maxima are diagnostic metrics, not hard-limit checks.

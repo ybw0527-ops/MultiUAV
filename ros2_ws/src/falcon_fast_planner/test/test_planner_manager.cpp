@@ -77,6 +77,21 @@ TEST(FastPlannerManagerTest, PlansPositionYawAndChecksCollision) {
 
   manager.local_data_.start_time_ = node->now();
   EXPECT_TRUE(manager.checkTrajCollision());
+  // The UAV center may be inside the task box while its body crosses the wall.
+  Eigen::MatrixXd near_boundary = Eigen::MatrixXd::Zero(6,3);
+  near_boundary.col(0).setConstant(4.85);
+  near_boundary.col(2).setConstant(1.0);
+  manager.local_data_.position_traj_ = NonUniformBspline(near_boundary,3,0.1);
+  manager.local_data_.duration_ = manager.local_data_.position_traj_.getTimeSum();
+  EXPECT_FALSE(manager.checkTrajCollision());
+  // Even a trajectory shorter than the sample interval must check its endpoints.
+  near_boundary.col(0).setConstant(0.0);
+  manager.local_data_.position_traj_ = NonUniformBspline(near_boundary,3,0.001);
+  manager.local_data_.duration_ = manager.local_data_.position_traj_.getTimeSum();
+  manager.local_data_.start_time_ = node->now();
+  auto grid = manager.map_server_->getOccupancyGrid();
+  grid->setOccupancy(grid->positionToAddress(Eigen::Vector3d(0,0,1)),voxel_mapping::OccupancyType::OCCUPIED);
+  EXPECT_FALSE(manager.checkTrajCollision());
 }
 
 TEST(FastPlannerManagerTest, RejectsInvalidTours) {
@@ -118,6 +133,9 @@ TEST(FastPlannerManagerTest, PlansMultiSegmentTourWithFiniteTiming) {
   EXPECT_TRUE(std::isfinite(manager.local_data_.duration_));
   EXPECT_GE(manager.local_data_.duration_, 1.0);
   EXPECT_TRUE(manager.local_data_.position_traj_.evaluateDeBoorT(0.0).allFinite());
+  EXPECT_TRUE(manager.local_data_.start_pos_.isApprox(tour.front(),1e-9));
+  EXPECT_TRUE(manager.local_data_.velocity_traj_.evaluateDeBoorT(0.0).isApprox(Eigen::Vector3d(0.1,0,0),1e-9));
+  EXPECT_LT(manager.local_data_.acceleration_traj_.evaluateDeBoorT(0.0).norm(),1e-9);
   EXPECT_TRUE(manager.local_data_.position_traj_
                   .evaluateDeBoorT(manager.local_data_.duration_)
                   .allFinite());

@@ -21,6 +21,7 @@
     bspline_opt:
       bspline_degree: 3
       safe_distance: 0.7
+      boundary_clearance: 0.3
       max_iteration_num: 1000
       max_iteration_time: 0.01
 

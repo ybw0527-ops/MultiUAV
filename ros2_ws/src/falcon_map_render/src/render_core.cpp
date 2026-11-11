@@ -44,7 +44,10 @@ void Scene::setPoints(std::vector<Eigen::Vector3d> points) {
   points.erase(std::remove_if(points.begin(), points.end(), [](const auto &p){return !p.allFinite();}), points.end());
   if (points.empty()) throw std::invalid_argument("Point cloud has no finite points");
   points_ = std::move(points);
-  triangles_.clear(); bvh_.clear(); order_.clear();
+  triangles_.clear(); bvh_.clear();
+  order_.resize(points_.size());
+  std::iota(order_.begin(), order_.end(), 0);
+  build(0, points_.size());
 }
 void Scene::load(const std::string &filename, double scale, const Eigen::Isometry3d &map_from_world) {
   if (!std::isfinite(scale) || scale <= 0 || !validTransform(map_from_world))
@@ -87,9 +90,14 @@ int Scene::build(size_t begin, size_t end) {
   node.hi = -node.lo;
   node.begin = begin; node.end = end;
   for (size_t i = begin; i < end; ++i) {
-    const auto &t = triangles_[order_[i]];
-    node.lo = node.lo.cwiseMin(t.a).cwiseMin(t.b).cwiseMin(t.c);
-    node.hi = node.hi.cwiseMax(t.a).cwiseMax(t.b).cwiseMax(t.c);
+    if (mesh()) {
+      const auto &t = triangles_[order_[i]];
+      node.lo = node.lo.cwiseMin(t.a).cwiseMin(t.b).cwiseMin(t.c);
+      node.hi = node.hi.cwiseMax(t.a).cwiseMax(t.b).cwiseMax(t.c);
+    } else {
+      node.lo = node.lo.cwiseMin(points_[order_[i]]);
+      node.hi = node.hi.cwiseMax(points_[order_[i]]);
+    }
   }
   bvh_.push_back(node);
   if (end - begin > 8) {
@@ -98,6 +106,7 @@ int Scene::build(size_t begin, size_t end) {
     const size_t mid = begin + (end - begin) / 2;
     std::nth_element(order_.begin()+begin, order_.begin()+mid, order_.begin()+end,
       [&](size_t a, size_t b) {
+        if (!mesh()) return points_[a][axis] < points_[b][axis];
         const auto &ta=triangles_[a]; const auto &tb=triangles_[b];
         return ta.a[axis]+ta.b[axis]+ta.c[axis] < tb.a[axis]+tb.b[axis]+tb.c[axis];
       });
@@ -105,6 +114,50 @@ int Scene::build(size_t begin, size_t end) {
     bvh_[index].left = left; bvh_[index].right = right;
   }
   return index;
+}
+
+namespace {
+double edgeDistanceSquared(const Eigen::Vector3d &p, const Eigen::Vector3d &a,
+                           const Eigen::Vector3d &b) {
+  const Eigen::Vector3d edge = b - a;
+  const double t = edge.squaredNorm() > 0 ? std::clamp((p-a).dot(edge)/edge.squaredNorm(),0.0,1.0) : 0.0;
+  return (p-a-t*edge).squaredNorm();
+}
+double triangleDistanceSquared(const Eigen::Vector3d &p, const Triangle &t) {
+  const Eigen::Vector3d n = (t.b-t.a).cross(t.c-t.a);
+  const double squared = n.squaredNorm();
+  if (squared > 1e-24) {
+    const double plane = (p-t.a).dot(n);
+    const Eigen::Vector3d q = p - (plane/squared)*n;
+    if ((t.b-t.a).cross(q-t.a).dot(n) >= 0 &&
+        (t.c-t.b).cross(q-t.b).dot(n) >= 0 &&
+        (t.a-t.c).cross(q-t.c).dot(n) >= 0)
+      return plane*plane/squared;
+  }
+  return std::min({edgeDistanceSquared(p,t.a,t.b),edgeDistanceSquared(p,t.b,t.c),
+                   edgeDistanceSquared(p,t.c,t.a)});
+}
+}
+double Scene::nearest(int index, const Eigen::Vector3d &point, double best) const {
+  const auto &node = bvh_[index];
+  const double bound = (node.lo-point).cwiseMax(point-node.hi).cwiseMax(0.0).squaredNorm();
+  if (bound >= best) return best;
+  if (node.left >= 0) {
+    const auto &left = bvh_[node.left]; const auto &right = bvh_[node.right];
+    const double dl = (left.lo-point).cwiseMax(point-left.hi).cwiseMax(0.0).squaredNorm();
+    const double dr = (right.lo-point).cwiseMax(point-right.hi).cwiseMax(0.0).squaredNorm();
+    best = nearest(dl < dr ? node.left : node.right,point,best);
+    return nearest(dl < dr ? node.right : node.left,point,best);
+  }
+  for (size_t i=node.begin;i<node.end;++i) {
+    const size_t id=order_[i];
+    best=std::min(best,mesh() ? triangleDistanceSquared(point,triangles_[id]) : (point-points_[id]).squaredNorm());
+  }
+  return best;
+}
+double Scene::clearance(const Eigen::Vector3d &point) const {
+  if (!point.allFinite() || bvh_.empty()) throw std::invalid_argument("Invalid collision query or empty scene");
+  return std::sqrt(nearest(0,point,std::numeric_limits<double>::infinity()));
 }
 double Scene::hit(int index, const Eigen::Vector3d &origin, const Eigen::Vector3d &direction,
                   double near, double far) const {

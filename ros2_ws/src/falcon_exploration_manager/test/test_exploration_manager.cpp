@@ -52,6 +52,16 @@ TEST(ExplorationManagerTest, InitializesAndBuildsUnknownMapTour) {
       fast_planner::SUCCEED);
   EXPECT_GT(manager.planner_manager_->local_data_.duration_, 0.0);
   EXPECT_TRUE(manager.planner_manager_->local_data_.position_traj_.evaluateDeBoorT(0.0).allFinite());
+  // A live replanning yaw is unwrapped, whereas frontier yaws lie in [-pi, pi].
+  EXPECT_EQ(manager.planTrajToView(Eigen::Vector3d(-1,0,2), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d::Zero(), Eigen::Vector3d(8 * M_PI + 0.2,0,0),
+      Eigen::Vector3d(1,0,2), -0.3), fast_planner::SUCCEED);
+  EXPECT_EQ(manager.planTrajToView(Eigen::Vector3d(-1,0,2), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d::Zero(), Eigen::Vector3d(8 * M_PI,0,0),
+      Eigen::Vector3d(-1,0,2), 0.0), fast_planner::FAIL);
+  EXPECT_EQ(manager.planTrajToView(Eigen::Vector3d(-1,0,2), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d(1,0,0.1), 0.0), fast_planner::FAIL);
 }
 
 

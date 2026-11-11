@@ -22,6 +22,8 @@ public:
   // Axial optical-camera depth in meters. Missing returns far + 1, as a free ray.
   std::vector<float> render(const Camera &camera, const Eigen::Isometry3d &world_from_camera) const;
   size_t primitiveCount() const;
+  // Unsigned Euclidean distance to original mesh triangles or point samples.
+  double clearance(const Eigen::Vector3d &point) const;
   bool mesh() const { return !triangles_.empty(); }
 private:
   struct BvhNode {
@@ -30,6 +32,7 @@ private:
     size_t begin{0}, end{0};
   };
   int build(size_t begin, size_t end);
+  double nearest(int node, const Eigen::Vector3d &point, double best_squared) const;
   double hit(int node, const Eigen::Vector3d &origin, const Eigen::Vector3d &direction,
              double near, double far) const;
   std::vector<Triangle> triangles_;

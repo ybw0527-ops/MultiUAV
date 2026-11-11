@@ -53,6 +53,8 @@ private:
   bool task_finished_{false};
 
   falcon_interfaces::msg::PositionCommand command_template_;
+  falcon_interfaces::msg::PositionCommand last_command_;
+  bool has_last_command_{false};
   PerceptionUtils::Ptr perception_utils_;
 
   Eigen::Vector3d initial_position_{Eigen::Vector3d::Zero()};

@@ -200,8 +200,45 @@ Completed milestones:
   Six-map depth/fusion checks and the full simulation graph are additional live
   integration checks, not extra cases counted in that aggregate.
 
-The next targets are bounded autonomous exploration runs, full-mission coverage
-and collision checks across the six environments, and later GPU acceleration.
+The autonomous regression stage adds:
+
+- A live six-map harness that starts exploration, observes trajectory execution
+  and replanning, measures known task-box volume, detects node failures/rejected
+  trajectories and large command jumps, and writes per-map JSON and logs. A shared
+  monotonic `/clock` avoids dependence on the WSL wall clock. Power plant uses the
+  original 0.1/0.2 m mapping resolutions and a 3 Hz sensor to fit CPU fusion throughput;
+  other maps use the bounded-test 0.25/0.5 m resolutions and a 10 Hz sensor.
+- Independent clearance checks against the original transformed triangles or
+  point samples. BVH nearest-distance queries and dense polyline sampling provide
+  a conservative clearance lower bound for a 0.2 m vehicle radius. The initial
+  positioning maneuver is excluded; sparse point clouds do not certify missing
+  surfaces, and box-known volume is not a reachable-free-space coverage percentage.
+- Multi-turn yaw handling in both path costs and trajectory time bounds. The old
+  shortest-turn formula could produce negative durations and terminate exploration
+  after several replans.
+- Reliable trajectory handoffs: hold the last valid command on unavailable samples,
+  preserve cubic position/velocity/acceleration at the handoff, wait for fresh
+  stationary odometry after a stop, and keep the checked old trajectory until a
+  replacement or explicit stop. Planning and publication overruns trigger a stop
+  and retry with an adaptive horizon instead of publishing stale motion.
+- Removal of the old unchecked knot compression, consistent yaw duration when
+  falling back to an initial position spline, and a configurable task-boundary
+  vehicle margin (`bspline_opt.boundary_clearance`, default 0.3 m). Collision checks
+  now include the current point, endpoint, and vehicle margin inside the task box.
+- Viewpoint candidates respect the same boundary margin. If the coarse tour
+  selects a locally unreachable goal, the manager tries other observed viewpoints
+  instead of repeatedly retrying that goal. The harness rejects a run that stops
+  moving for its final 15 seconds while the FSM is still exploring.
+
+The next targets are full-mission coverage targets across all six environments,
+tracking with the SO3/dynamics simulator, and later GPU acceleration.
+
+The autonomous milestone records 49 passing colcon checks and six passing
+60-second live runs, including the final-window progress check. See
+`ros2_ws/src/falcon_map_render/test/autonomous_run_summary.json` for the observed
+metrics and explicit limits. The smallest recorded geometry clearance lower
+bound was 0.284 m; the test radius was 0.2 m. Acceleration spikes remain visible
+in the recorded metrics and are not accepted as dynamically feasible flight.
 Upstream currently implements one hierarchical-grid level only; the ROS 2 port
 rejects other level counts. The new simulation graph uses command-to-odometry
 execution; the SO3 controller/dynamics simulator is still unmigrated.
@@ -267,7 +304,9 @@ ros2 run falcon_fast_planner trajectory_server_node --ros-args \
 ## Known upstream issues to preserve or address explicitly
 
 - The upstream implementation is ROS 1 Noetic and uses catkin/nodelets.
-- Velocity and acceleration limits are applied per axis in the upstream B-spline optimizer.
+- Velocity and acceleration feasibility costs are soft and per axis in the upstream
+  B-spline optimizer. Recorded commands can contain acceleration spikes; hard-limit
+  validation and dynamically tracked execution remain required before flight use.
 - The lightweight simulator is not Gazebo and uses rendered depth plus synthetic odometry.
 - The repository does not currently provide a root license file; redistribution terms
   must be confirmed before publishing a derivative repository.

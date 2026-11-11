@@ -100,6 +100,9 @@ TEST(PathCostEvaluatorTest, ComputesTranslationAndYawLowerBound) {
   EXPECT_NEAR(PathCostEvaluator::computePathCost(start, goal, 0.0, M_PI,
                                                  Eigen::Vector3d::Zero(), 0.0, empty_path, 2.0),
               M_PI + 0.5, 1e-9);
+  EXPECT_NEAR(PathCostEvaluator::computePathCost(start, goal, 8 * M_PI, M_PI,
+                                                 Eigen::Vector3d::Zero(), 0.0, empty_path, 2.0),
+              M_PI + 0.5, 1e-9);
 }
 
 } // namespace

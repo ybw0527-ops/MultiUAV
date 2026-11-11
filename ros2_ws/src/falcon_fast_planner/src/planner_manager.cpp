@@ -43,9 +43,11 @@ void FastPlannerManager::init(rclcpp::Node &node) {
   readParameter(node, "uav_model.dynamics_parameters.max_linear_acceleration", pp_.max_acc_,
                 -1.0);
   readParameter(node, "fast_planner.control_points_distance", pp_.ctrl_pt_dist_, -1.0);
+  readParameter(node, "bspline_opt.boundary_clearance", pp_.boundary_clearance_, 0.3);
 
   // Check parameters
-  if (pp_.max_vel_ <= 0.0 || pp_.max_acc_ <= 0.0 || pp_.ctrl_pt_dist_ <= 0.0)
+  if (pp_.max_vel_ <= 0.0 || pp_.max_acc_ <= 0.0 || pp_.ctrl_pt_dist_ <= 0.0 ||
+      !std::isfinite(pp_.boundary_clearance_) || pp_.boundary_clearance_ < 0.0)
     throw std::invalid_argument("Fast planner velocity, acceleration, and control-point distance "
                                 "parameters must be positive");
 
@@ -271,6 +273,14 @@ void FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Ve
     bspline_optimizers_[0]->optimize(ctrl_pts, dt, cost_func);
   }
 
+  // Start-state penalties are soft. Preserve the actual handoff state exactly
+  // after time optimization, rather than teleporting to an optimized start.
+  if (bspline_degree == 3) {
+    const Eigen::Vector3d position = tour.front();
+    ctrl_pts.row(0) = (position - dt*cur_vel_bound + dt*dt/3.0*cur_acc_bound).transpose();
+    ctrl_pts.row(1) = (position - dt*dt/6.0*cur_acc_bound).transpose();
+    ctrl_pts.row(2) = (position + dt*cur_vel_bound + dt*dt/3.0*cur_acc_bound).transpose();
+  }
   local_data_.position_traj_.setUniformBspline(ctrl_pts, bspline_degree, dt);
   local_data_.velocity_traj_ = local_data_.position_traj_.getDerivative();
   local_data_.acceleration_traj_ = local_data_.velocity_traj_.getDerivative();
@@ -442,17 +452,24 @@ bool FastPlannerManager::checkTrajCollision() {
   t_now = std::clamp(t_now, 0.0, local_data_.duration_);
 
   Eigen::Vector3d cur_pt = local_data_.position_traj_.evaluateDeBoorT(t_now);
+  Eigen::Vector3d bmin, bmax;
+  map_server_->getBox(bmin, bmax);
   double radius = 0.0;
   Eigen::Vector3d fut_pt;
-  double fut_t = 0.02;
+  double fut_t = 0.0;
 
-  while (radius < 6.0 && t_now + fut_t < local_data_.duration_) {
-    fut_pt = local_data_.position_traj_.evaluateDeBoorT(t_now + fut_t);
-    if (map_server_->getOccupancy(fut_pt) == voxel_mapping::OccupancyType::OCCUPIED) {
+  while (radius < 6.0) {
+    const double sample_time = std::min(t_now + fut_t, local_data_.duration_);
+    fut_pt = local_data_.position_traj_.evaluateDeBoorT(sample_time);
+    if (!fut_pt.allFinite() ||
+        (fut_pt.array() < bmin.array() + pp_.boundary_clearance_ - 1e-6).any() ||
+        (fut_pt.array() > bmax.array() - pp_.boundary_clearance_ + 1e-6).any() ||
+        map_server_->getOccupancy(fut_pt) == voxel_mapping::OccupancyType::OCCUPIED) {
       RCLCPP_ERROR(node_->get_logger(), "Collision detected at (%.2f, %.2f, %.2f)", fut_pt.x(),
                    fut_pt.y(), fut_pt.z());
       return false;
     }
+    if (sample_time >= local_data_.duration_) break;
     radius = (fut_pt - cur_pt).norm();
     fut_t += 0.02;
   }

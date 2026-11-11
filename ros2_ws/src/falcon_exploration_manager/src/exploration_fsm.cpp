@@ -284,6 +284,10 @@ void ExplorationFSM::FSMCallback() {
   }
 
   case PLAN_TRAJ: {
+    if (waiting_for_stop_) {
+      if (last_odom_stamp_ < stop_requested_time_ || fd_->odom_vel_.norm() > 0.05) break;
+      waiting_for_stop_ = false;
+    }
     int cur_cell_id, cur_center_id;
     expl_manager_->hierarchical_grid_->getLayerPositionCellCenterId(0, fd_->odom_pos_, cur_cell_id,
                                                                     cur_center_id);
@@ -360,17 +364,15 @@ void ExplorationFSM::FSMCallback() {
       }
     }
 
-    // Inform traj_server the replanning
-    std_msgs::msg::Int32 replan_msg;
-    replan_msg.data = 0;
-    replan_pub_->publish(replan_msg);
+    // Keep the checked old trajectory until replacement or an explicit stop.
+    // A fixed 0.5 s truncation disagrees with a measured longer planning horizon.
 
     // Exploration plannner main function
     int res = callExplorationPlanner();
     if (res == SUCCEED) {
       transitState(PUB_TRAJ, "FSM");
     } else if (res == FAIL) { // Keep trying to replan
-      fd_->static_state_ = true;
+      stopAndWaitForOdometry();
       RCLCPP_WARN(node_->get_logger(), "[FSM] Plan fail");
     } else if (res == NO_GRID) {
       fd_->static_state_ = true;
@@ -388,6 +390,16 @@ void ExplorationFSM::FSMCallback() {
   }
 
   case PUB_TRAJ: {
+    const double publication_lateness = (node_->now() - trajectory_start_time_).seconds();
+    if (publication_lateness > 0.05) {
+      RCLCPP_WARN(node_->get_logger(), "[FSM] Discarding plan delayed before publication");
+      publication_margin_ += publication_lateness + 0.05;
+      fp_->replan_duration_ += publication_lateness + 0.05;
+      expl_manager_->ep_->replan_duration_ = fp_->replan_duration_;
+      stopAndWaitForOdometry();
+      transitState(PLAN_TRAJ, "late publication");
+      break;
+    }
     bool safe = planner_manager_->checkTrajCollision();
     // if (!safe) {
     //   RCLCPP_ERROR(node_->get_logger(), "[FSM] Replan: collision detected on the trajectory before publishing");
@@ -398,6 +410,7 @@ void ExplorationFSM::FSMCallback() {
 
     if (!safe) {
       RCLCPP_ERROR(node_->get_logger(), "[FSM] Collision detected on the trajectory before publishing");
+      const double goal_yaw = planner_manager_->local_data_.end_yaw_;
 
       planner_manager_->local_data_.position_traj_ =
           planner_manager_->local_data_.init_traj_bspline_;
@@ -412,18 +425,15 @@ void ExplorationFSM::FSMCallback() {
       planner_manager_->local_data_.end_pos_ =
           planner_manager_->local_data_.position_traj_.evaluateDeBoorT(
               planner_manager_->local_data_.duration_);
-      planner_manager_->local_data_.start_yaw_ =
-          planner_manager_->local_data_.yaw_traj_.evaluateDeBoorT(0.0)[0];
-      planner_manager_->local_data_.end_yaw_ =
-          planner_manager_->local_data_.yaw_traj_.evaluateDeBoorT(
-              planner_manager_->local_data_.duration_)[0];
+      planner_manager_->planExplorationYawWaypointsTraj(
+          fd_->start_yaw_(0), fd_->start_yaw_(1), goal_yaw, {}, {});
 
       bool safe_init_path = planner_manager_->checkTrajCollision();
 
       if (!safe_init_path) {
         RCLCPP_ERROR(node_->get_logger(), "[FSM] Replan: collision also detected on the initial trajectory");
 
-        fd_->static_state_ = true;
+        stopAndWaitForOdometry();
         transitState(PLAN_TRAJ, "FSM");
         break;
       }
@@ -431,32 +441,8 @@ void ExplorationFSM::FSMCallback() {
       RCLCPP_WARN(node_->get_logger(), "[FSM] Replacing the trajectory with the safe initial trajectory");
     }
 
-    // Check traj avg vel
-    double pos_traj_length = planner_manager_->local_data_.position_traj_.getLength();
-    double pos_traj_duration = planner_manager_->local_data_.position_traj_.getTimeSum();
-    double avg_pos_vel = pos_traj_length / pos_traj_duration;
-    double yaw_traj_length = planner_manager_->local_data_.yaw_traj_.getLength();
-    double yaw_traj_duration = planner_manager_->local_data_.yaw_traj_.getTimeSum();
-    double avg_yaw_vel = yaw_traj_length / yaw_traj_duration;
-    // ROS_WARN_COND(avg_vel < 0.1, "[FSM] Average velocity too low: %.2lf", avg_vel);
-
-    // static bool traj_lengthened = false;
-    // if (avg_pos_vel < 0.5 && avg_yaw_vel < 0.5 && !traj_lengthened) {
-    if (avg_pos_vel > 1e-6 && avg_yaw_vel > 1e-6 && avg_pos_vel < 0.5 && avg_yaw_vel < 0.5) {
-      RCLCPP_WARN(node_->get_logger(), "[FSM] Slow trajectory detected, duration: %.2lf, length: %.2lf", pos_traj_duration,
-               pos_traj_length);
-      // traj_lengthened = true;
-      double yaw_ratio = 1.57 / avg_yaw_vel;
-      double pos_ratio = 2.0 / avg_pos_vel;
-      double ratio = 1.0 / std::min(yaw_ratio, pos_ratio);
-      planner_manager_->local_data_.position_traj_.lengthenTime(ratio);
-      planner_manager_->local_data_.yaw_traj_.lengthenTime(ratio);
-      RCLCPP_WARN(node_->get_logger(), "[FSM] Avg position velocity: %.2lf, avg yaw velocity: %.2lf, lengthen ratio: %.2lf",
-               avg_pos_vel, avg_yaw_vel, ratio);
-
-      double init_traj_duration = planner_manager_->local_data_.init_traj_bspline_.getTimeSum();
-      RCLCPP_WARN(node_->get_logger(), "[FSM] Initial traj duration: %.2lf", init_traj_duration);
-    }
+    // Preserve the planner's time parameterization and derivative consistency.
+    // Compressing knots here bypassed dynamic limits and left stale derivatives.
 
     falcon_interfaces::msg::Bspline bspline;
     auto info = &planner_manager_->local_data_;
@@ -585,13 +571,11 @@ void ExplorationFSM::FSMCallback() {
 }
 
 int ExplorationFSM::callExplorationPlanner() {
-  rclcpp::Time time_r = node_->now() + rclcpp::Duration::from_seconds(fp_->replan_duration_);
-
-  rclcpp::Time plan_start_time = node_->now();
+  const auto plan_start_time = std::chrono::steady_clock::now();
   int res = expl_manager_->planExploreMotionHGrid(fd_->start_pos_, fd_->start_vel_, fd_->start_acc_,
                                                   fd_->start_yaw_);
-  rclcpp::Time plan_end_time = node_->now();
-  double plan_total_time = (node_->now() - plan_start_time).seconds();
+  const double plan_total_time = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - plan_start_time).count();
   RCLCPP_INFO_STREAM(node_->get_logger(), "[FSM] Exploration planner total time: "
                   << std::setprecision(4) << plan_total_time * 1000.0
                   << "ms, replan duration: " << fp_->replan_duration_ * 1000.0 << "ms");
@@ -605,9 +589,15 @@ int ExplorationFSM::callExplorationPlanner() {
   } else {
     fp_->replan_duration_ = fp_->replan_duration_default_;
   }
+  // The configured slow horizon is a baseline, not a cap on measured CPU time.
+  fp_->replan_duration_ = std::max(fp_->replan_duration_, plan_total_time + publication_margin_);
   expl_manager_->ep_->replan_duration_ = fp_->replan_duration_;
 
   if (res == SUCCEED) {
+    if ((node_->now() - trajectory_start_time_).seconds() > 0.05) {
+      RCLCPP_WARN(node_->get_logger(), "[FSM] Discarding late plan; stop and retry from current odometry");
+      return FAIL;
+    }
     auto info = &planner_manager_->local_data_;
     // ROS_ERROR_COND((node_->now() - time_r).seconds() < -0.1,
     //                "[FSM] replan_time set too large, please decrease it. diff: %lf",
@@ -870,12 +860,19 @@ void ExplorationFSM::safetyCallback() {
     bool safe = planner_manager_->checkTrajCollision();
     if (!safe) {
       RCLCPP_ERROR(node_->get_logger(), "[FSM] Collision detected on the trajectory! Replanning...");
-      std_msgs::msg::Int32 replan_msg;
-      replan_msg.data = 1;
-      replan_pub_->publish(replan_msg);
+      stopAndWaitForOdometry();
       transitState(PLAN_TRAJ, "safetyCallback");
     }
   }
+}
+
+void ExplorationFSM::stopAndWaitForOdometry() {
+  std_msgs::msg::Int32 stop;
+  stop.data = 1;
+  replan_pub_->publish(stop);
+  stop_requested_time_ = node_->now();
+  waiting_for_stop_ = true;
+  fd_->static_state_ = true;
 }
 
 void ExplorationFSM::odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg) {
@@ -890,6 +887,7 @@ void ExplorationFSM::odometryCallback(const nav_msgs::msg::Odometry::ConstShared
     return;
   }
   fd_->odom_pos_(0) = msg->pose.pose.position.x;
+  last_odom_stamp_ = rclcpp::Time(msg->header.stamp, RCL_ROS_TIME);
   fd_->odom_pos_(1) = msg->pose.pose.position.y;
   fd_->odom_pos_(2) = msg->pose.pose.position.z;
 
