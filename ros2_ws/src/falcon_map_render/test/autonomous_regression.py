@@ -22,7 +22,7 @@ from std_msgs.msg import Float32
 
 def main():
     parser = argparse.ArgumentParser(__doc__)
-    maps = ['duplex_office', 'complex_office', 'classical_office', 'octa_maze', 'darpa_tunnel', 'power_plant']
+    maps = ['darpa_tunnel', 'power_plant', 'complex_office', 'duplex_office', 'classical_office', 'octa_maze']
     parser.add_argument('--map', choices=maps + ['all'], default='complex_office')
     parser.add_argument('--duration', type=float, default=60)
     parser.add_argument('--output', default='/tmp/falcon_autonomous')
@@ -52,6 +52,9 @@ def main():
                   coverage_start=None, coverage_final=0.0, distance=0.0,
                   command_jumps=0, max_command_step=0.0, max_speed=0.0, max_acceleration=0.0)
     result['requested_duration_sec'] = args.duration
+    result['max_spline_speed_bound'] = 0.0
+    result['max_spline_acceleration_bound'] = 0.0
+    result['shutdown_forced'] = False
     result['frontier_points'] = {'active': 0, 'dormant': 0, 'tiny': 0}
     samples = []
     previous = None
@@ -59,6 +62,20 @@ def main():
 
     def trajectory(msg):
         result['trajectories'] += 1
+        points = [(p.x, p.y, p.z) for p in msg.pos_pts]
+        knots = list(msg.knots)
+        for derivative in (1, 2):
+            degree = msg.order - derivative + 1
+            next_points = []
+            for i in range(len(points) - 1):
+                denominator = knots[i + degree + 1] - knots[i + 1]
+                if denominator <= 0:
+                    next_points.append((math.inf,) * 3)
+                else:
+                    next_points.append(tuple(degree * (b-a) / denominator for a, b in zip(points[i], points[i+1])))
+            points, knots = next_points, knots[1:-1]
+            key = 'max_spline_speed_bound' if derivative == 1 else 'max_spline_acceleration_bound'
+            result[key] = max(result[key], max(math.hypot(*p) for p in points))
         if result['coverage_start'] is None:
             result['coverage_start'] = result['coverage_final']
             result['first_plan_sec'] = time.monotonic() - start
@@ -150,18 +167,30 @@ def main():
             result['elapsed_sec'] = time.monotonic() - start
         finally:
             if process.poll() is None:
-                os.killpg(process.pid, signal.SIGINT)
+                # Let launch signal its own nodes once. Signaling the entire
+                # process group as well delivered duplicate SIGINTs to nodes.
+                process.send_signal(signal.SIGINT)
                 try:
                     process.wait(timeout=8)
                 except subprocess.TimeoutExpired:
+                    result['shutdown_forced'] = True
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
             node.destroy_node()
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
             result['samples'] = samples
             (output / (args.map + '.json')).write_text(json.dumps(result, indent=2))
+    teardown_log = log_path.read_text()
+    if (result['shutdown_forced'] or teardown_log.count('process has finished cleanly') != 4 or
+            'process has died' in teardown_log or '[FATAL]' in teardown_log):
+        raise RuntimeError('Simulation node failed during shutdown; see ' + str(log_path))
     print(json.dumps({k: v for k, v in result.items() if k != 'samples'}), flush=True)
     assert result['invalid_commands'] == 0, 'Nonfinite flight command'
+    assert result['max_speed'] <= 2.0 + 1e-5, 'Command speed exceeds 2 m/s'
+    assert result['max_acceleration'] <= 2.0 + 1e-5, 'Command acceleration exceeds 2 m/s^2'
+    assert result['max_spline_speed_bound'] <= 2.0 + 1e-5, 'Whole spline exceeds speed limit'
+    assert result['max_spline_acceleration_bound'] <= 2.0 + 1e-5, 'Whole spline exceeds acceleration limit'
     assert result['command_jumps'] == 0, 'Flight command position jumped'
     assert result['trajectories'] >= 2, 'No exploration/replanning trajectory'
     assert result['distance'] > 1.0, 'No executed exploration motion'

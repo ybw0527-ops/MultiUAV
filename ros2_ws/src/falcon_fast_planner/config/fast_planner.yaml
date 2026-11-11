@@ -17,6 +17,7 @@
 
     fast_planner:
       control_points_distance: 0.5
+      collision_clearance: 0.2
 
     bspline_opt:
       bspline_degree: 3

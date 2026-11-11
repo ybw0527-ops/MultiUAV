@@ -85,6 +85,21 @@ TEST(BsplineOptimizerTest, LoadsRos2Parameters) {
   EXPECT_THROW(optimizer.setPhysicalLimits(0.0, 1.0), std::invalid_argument);
 }
 
+TEST(NonUniformBsplineTest, DerivativeBoundsCoverWholeCurveAndRejectDegenerateKnots) {
+  Eigen::MatrixXd points(7,3);
+  points << 0,0,0, 0,0,0, 0.2,0.2,0, 1,-0.3,0.5, 2,1,0.2, 2,1,0.2, 2,1,0.2;
+  NonUniformBspline spline(points,3,0.2);
+  const auto bounds=spline.derivativeNormBounds();
+  auto velocity=spline.getDerivative(); auto acceleration=velocity.getDerivative();
+  ASSERT_GT(bounds[0],0.0); ASSERT_GT(bounds[1],0.0);
+  for(double t=0;t<=spline.getTimeSum();t+=0.001) {
+    EXPECT_LE(velocity.evaluateDeBoorT(t).norm(),bounds[0]+1e-9);
+    EXPECT_LE(acceleration.evaluateDeBoorT(t).norm(),bounds[1]+1e-9);
+  }
+  auto knots=spline.getKnot(); knots.setZero(); spline.setKnot(knots);
+  EXPECT_FALSE(spline.derivativeNormBounds().allFinite());
+}
+
 TEST(BsplineOptimizerTest, RunsNloptOnYawControlPoints) {
   ensureRosInitialized();
   rclcpp::NodeOptions options;

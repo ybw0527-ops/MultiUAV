@@ -24,6 +24,32 @@ void readParameter(rclcpp::Node &node, const std::string &name, T &value,
 
 using PlannerClock = std::chrono::steady_clock;
 
+bool feasibleCubic(const Eigen::MatrixXd &shape, double dt,
+                   const Eigen::Vector3d &position, const Eigen::Vector3d &velocity,
+                   const Eigen::Vector3d &acceleration, const Eigen::Vector3d &goal,
+                   double max_velocity, double max_acceleration, double minimum_duration,
+                   NonUniformBspline &result) {
+  if (shape.rows()<6 || shape.cols()!=3 || !shape.allFinite() || !std::isfinite(dt) || dt<=0)
+    return false;
+  dt=std::max(dt,minimum_duration/(shape.rows()-3));
+  for (int attempt=0;attempt<64;++attempt,dt*=1.06) {
+    if (dt*(shape.rows()-3)>120.0) break;
+    auto points=shape;
+    points.row(0)=(position-dt*velocity+dt*dt/3.0*acceleration).transpose();
+    points.row(1)=(position-dt*dt/6.0*acceleration).transpose();
+    points.row(2)=(position+dt*velocity+dt*dt/3.0*acceleration).transpose();
+    // Reach the endpoint at rest, including zero terminal acceleration.
+    points.bottomRows(3)=goal.transpose().replicate(3,1);
+    NonUniformBspline trial(points,3,dt);
+    const auto bounds=trial.derivativeNormBounds();
+    if (bounds[0]<=max_velocity+1e-8 && bounds[1]<=max_acceleration+1e-8) {
+      result=std::move(trial);
+      return true;
+    }
+  }
+  return false;
+}
+
 double elapsedMilliseconds(const PlannerClock::time_point &start) {
   return std::chrono::duration<double, std::milli>(PlannerClock::now() - start).count();
 }
@@ -44,10 +70,13 @@ void FastPlannerManager::init(rclcpp::Node &node) {
                 -1.0);
   readParameter(node, "fast_planner.control_points_distance", pp_.ctrl_pt_dist_, -1.0);
   readParameter(node, "bspline_opt.boundary_clearance", pp_.boundary_clearance_, 0.3);
+  readParameter(node, "fast_planner.collision_clearance", pp_.collision_clearance_, 0.2);
 
   // Check parameters
-  if (pp_.max_vel_ <= 0.0 || pp_.max_acc_ <= 0.0 || pp_.ctrl_pt_dist_ <= 0.0 ||
-      !std::isfinite(pp_.boundary_clearance_) || pp_.boundary_clearance_ < 0.0)
+  if (!std::isfinite(pp_.max_vel_) || !std::isfinite(pp_.max_acc_) ||
+      !std::isfinite(pp_.ctrl_pt_dist_) || pp_.max_vel_ <= 0.0 || pp_.max_acc_ <= 0.0 || pp_.ctrl_pt_dist_ <= 0.0 ||
+      !std::isfinite(pp_.boundary_clearance_) || pp_.boundary_clearance_ < 0.0 ||
+      !std::isfinite(pp_.collision_clearance_) || pp_.collision_clearance_ < 0.0)
     throw std::invalid_argument("Fast planner velocity, acceleration, and control-point distance "
                                 "parameters must be positive");
 
@@ -75,7 +104,7 @@ void FastPlannerManager::init(rclcpp::Node &node) {
   }
 }
 
-void FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Vector3d> &tour,
+bool FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Vector3d> &tour,
                                                      const Eigen::Vector3d &cur_vel,
                                                      const Eigen::Vector3d &cur_acc,
                                                      const double &time_lb, const bool verbose) {
@@ -90,6 +119,10 @@ void FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Ve
   if (!tour.front().allFinite() || !cur_vel.allFinite() || !cur_acc.allFinite() ||
       !std::isfinite(time_lb) || time_lb < 0.0)
     throw std::invalid_argument("Trajectory planning inputs must be finite and time bound nonnegative");
+  if (cur_vel.norm()>pp_.max_vel_+1e-6 || cur_acc.norm()>pp_.max_acc_+1e-6) {
+    RCLCPP_WARN(node_->get_logger(), "Start state exceeds hard derivative limits; stop before replanning");
+    return false;
+  }
 
   const auto t1 = PlannerClock::now();
 
@@ -260,6 +293,9 @@ void FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Ve
   int bspline_degree = bspline_optimizers_[0]->getBsplineDegree();
   NonUniformBspline::parameterizeToBspline(dt, points, boundary_deri, bspline_degree, ctrl_pts);
   local_data_.init_traj_bspline_ = NonUniformBspline(ctrl_pts, bspline_degree, dt);
+  NonUniformBspline feasible_initial;
+  bool initial_ok = bspline_degree==3 && feasibleCubic(ctrl_pts,dt,tour.front(),cur_vel,
+      cur_acc,tour.back(),pp_.max_vel_,pp_.max_acc_,time_lb,feasible_initial);
 
   int cost_func = BsplineOptimizer::EXPLORATION_POSITION_PHASE;
 
@@ -273,15 +309,23 @@ void FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Ve
     bspline_optimizers_[0]->optimize(ctrl_pts, dt, cost_func);
   }
 
-  // Start-state penalties are soft. Preserve the actual handoff state exactly
-  // after time optimization, rather than teleporting to an optimized start.
-  if (bspline_degree == 3) {
-    const Eigen::Vector3d position = tour.front();
-    ctrl_pts.row(0) = (position - dt*cur_vel_bound + dt*dt/3.0*cur_acc_bound).transpose();
-    ctrl_pts.row(1) = (position - dt*dt/6.0*cur_acc_bound).transpose();
-    ctrl_pts.row(2) = (position + dt*cur_vel_bound + dt*dt/3.0*cur_acc_bound).transpose();
+  NonUniformBspline feasible_position;
+  bool optimized_ok = bspline_degree==3 && feasibleCubic(ctrl_pts,dt,tour.front(),cur_vel,
+      cur_acc,tour.back(),pp_.max_vel_,pp_.max_acc_,time_lb,feasible_position);
+  if (initial_ok) initial_ok = isCurveSafe(feasible_initial,0.0,true);
+  if (optimized_ok) optimized_ok = isCurveSafe(feasible_position,0.0,true);
+  if (!optimized_ok && !initial_ok) {
+    RCLCPP_WARN(node_->get_logger(), "No safe position spline satisfies hard speed/acceleration bounds");
+    return false;
   }
-  local_data_.position_traj_.setUniformBspline(ctrl_pts, bspline_degree, dt);
+  // Time repair can make the optimized candidate much slower than the fitted
+  // path. Try the faster feasible candidate first and retain the other for the
+  // FSM's mandatory collision-checked fallback.
+  const bool use_initial = initial_ok &&
+      (!optimized_ok || feasible_initial.getTimeSum() < feasible_position.getTimeSum());
+  local_data_.position_traj_ = use_initial ? feasible_initial : feasible_position;
+  local_data_.init_traj_bspline_ = use_initial && optimized_ok ? feasible_position :
+      (initial_ok ? feasible_initial : feasible_position);
   local_data_.velocity_traj_ = local_data_.position_traj_.getDerivative();
   local_data_.acceleration_traj_ = local_data_.velocity_traj_.getDerivative();
 
@@ -364,6 +408,7 @@ void FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Ve
 
   RCLCPP_INFO(node_->get_logger(), "Position trajectory optimization time: %.3f ms",
               elapsedMilliseconds(t1));
+  return true;
 }
 
 void FastPlannerManager::planExplorationYawWaypointsTraj(
@@ -445,36 +490,69 @@ void FastPlannerManager::calcNextYaw(const double &last_yaw, double &yaw) {
   }
 }
 
+bool FastPlannerManager::isCurveSafe(NonUniformBspline curve, double start_time, bool log) {
+  constexpr double sample_period = 0.02;
+  const auto bounds=curve.derivativeNormBounds();
+  if (bounds[0]>pp_.max_vel_+1e-6 || bounds[1]>pp_.max_acc_+1e-6) return false;
+  // A speed bound limits deviation between checks. Occupied voxel AABBs include
+  // discretization uncertainty instead of treating an obstacle as its center.
+  const double clearance = pp_.collision_clearance_ + 0.5*pp_.max_vel_*sample_period;
+  const double resolution = map_server_->getResolution();
+  const auto grid = map_server_->getOccupancyGrid();
+  Eigen::Vector3d bmin,bmax;
+  map_server_->getBox(bmin,bmax);
+  if (clearance>=0.5*(bmax-bmin).minCoeff()) return false;
+  const int extent = static_cast<int>(std::ceil(clearance/resolution))+1;
+  const double margin=std::max(pp_.boundary_clearance_,clearance);
+  const double duration = curve.getTimeSum();
+  double time = std::clamp(start_time,0.0,duration);
+  const Eigen::Vector3d trusted_start=curve.evaluateDeBoorT(time);
+  while (true) {
+    const Eigen::Vector3d point = curve.evaluateDeBoorT(time);
+    bool safe = point.allFinite() &&
+        (point.array() >= bmin.array()+margin-1e-6).all() &&
+        (point.array() <= bmax.array()-margin+1e-6).all();
+    const char *reason="boundary";
+    Eigen::Vector3d obstacle=Eigen::Vector3d::Zero();
+    if (safe) {
+      const auto state=map_server_->getOccupancy(point);
+      // The measured handoff body is already known to be free even when the
+      // depth sensor's near-range blind spot leaves its center unobserved.
+      safe=state==voxel_mapping::OccupancyType::FREE ||
+          (state==voxel_mapping::OccupancyType::UNKNOWN &&
+           (point-trusted_start).norm()<=pp_.collision_clearance_);
+      reason=state==voxel_mapping::OccupancyType::UNKNOWN ? "unobserved center" : "occupied center";
+    }
+    if (safe) {
+      const auto index=grid->positionToIndex(point);
+      for (int x=-extent;x<=extent && safe;++x)
+        for (int y=-extent;y<=extent && safe;++y)
+          for (int z=-extent;z<=extent && safe;++z) {
+            const Eigen::Vector3i neighbor=index+Eigen::Vector3i(x,y,z);
+            if (!grid->isInMap(neighbor)) continue;
+            const Eigen::Vector3d gap=((grid->indexToPosition(neighbor)-point).cwiseAbs()-
+                Eigen::Vector3d::Constant(0.5*resolution)).cwiseMax(0.0);
+            if (gap.squaredNorm()>clearance*clearance) continue;
+            if (grid->getVoxel(neighbor).value==voxel_mapping::OccupancyType::OCCUPIED) {
+              safe=false; reason="occupied neighbor"; obstacle=grid->indexToPosition(neighbor);
+            }
+          }
+    }
+    if (!safe) {
+      if (log) RCLCPP_WARN_THROTTLE(node_->get_logger(),*node_->get_clock(),1000,
+          "Unsafe curve: %s at (%.3f, %.3f, %.3f), obstacle (%.3f, %.3f, %.3f)",
+          reason,point.x(),point.y(),point.z(),obstacle.x(),obstacle.y(),obstacle.z());
+      return false;
+    }
+    if (time>=duration) return true;
+    time=std::min(time+sample_period,duration);
+  }
+}
+
 bool FastPlannerManager::checkTrajCollision() {
   if (node_ == nullptr || !map_server_ || local_data_.duration_ <= 0.0)
     throw std::logic_error("A valid initialized trajectory is required for collision checking");
-  double t_now = (node_->now() - local_data_.start_time_).seconds();
-  t_now = std::clamp(t_now, 0.0, local_data_.duration_);
-
-  Eigen::Vector3d cur_pt = local_data_.position_traj_.evaluateDeBoorT(t_now);
-  Eigen::Vector3d bmin, bmax;
-  map_server_->getBox(bmin, bmax);
-  double radius = 0.0;
-  Eigen::Vector3d fut_pt;
-  double fut_t = 0.0;
-
-  while (radius < 6.0) {
-    const double sample_time = std::min(t_now + fut_t, local_data_.duration_);
-    fut_pt = local_data_.position_traj_.evaluateDeBoorT(sample_time);
-    if (!fut_pt.allFinite() ||
-        (fut_pt.array() < bmin.array() + pp_.boundary_clearance_ - 1e-6).any() ||
-        (fut_pt.array() > bmax.array() - pp_.boundary_clearance_ + 1e-6).any() ||
-        map_server_->getOccupancy(fut_pt) == voxel_mapping::OccupancyType::OCCUPIED) {
-      RCLCPP_ERROR(node_->get_logger(), "Collision detected at (%.2f, %.2f, %.2f)", fut_pt.x(),
-                   fut_pt.y(), fut_pt.z());
-      return false;
-    }
-    if (sample_time >= local_data_.duration_) break;
-    radius = (fut_pt - cur_pt).norm();
-    fut_t += 0.02;
-  }
-
-  return true;
+  return isCurveSafe(local_data_.position_traj_,(node_->now()-local_data_.start_time_).seconds(),true);
 }
 
 void FastPlannerManager::saveBsplineTraj(const std::string &file_name) {

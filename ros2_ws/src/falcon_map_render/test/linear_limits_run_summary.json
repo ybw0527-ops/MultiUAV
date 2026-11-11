@@ -1,0 +1,266 @@
+{
+  "description": "Observed bounded linear-motion validation; numbers are observations, not exact golden expectations.",
+  "hard_limits": {
+    "euclidean_speed_mps": 2,
+    "euclidean_acceleration_mps2": 2,
+    "vehicle_radius_m": 0.2
+  },
+  "unit_checks": {
+    "total": 53,
+    "failures": 0,
+    "ros_isolation": "ament_add_ros_isolated_gtest"
+  },
+  "repeated_tests": {
+    "native_repetitions_per_suite": 20,
+    "planner_case_executions": 100,
+    "trajectory_server_case_executions": 80,
+    "failures": 0
+  },
+  "stability_observation": "One earlier default-domain parallel run exited with SIGSEGV during the fifth planner test; no causal stack was captured. It did not recur in 20 isolated-domain and 30 default-domain debugger repetitions or the isolated native repetitions. Exact cause remains unconfirmed; retain this observation for lifecycle triage.",
+  "limits": [
+    "Ideal command-to-odometry execution; angular, jerk/thrust, emergency-braking dynamics and SO3 tracking remain unvalidated.",
+    "FSM completion is an announcement and does not certify full reachable-space coverage.",
+    "Point-cloud clearance covers supplied samples, not unobserved or missing surfaces."
+  ],
+  "node_shutdown_verification": "All four simulation nodes finished cleanly in each recorded run; raw logs rechecked.",
+  "maps": [
+    {
+      "map": "darpa_tunnel",
+      "trajectories": 47,
+      "commands": 5907,
+      "invalid_commands": 0,
+      "coverage_start": 52.078125,
+      "coverage_final": 246.546875,
+      "distance": 24.081120186605077,
+      "command_jumps": 0,
+      "max_command_step": 0.0397606274732325,
+      "max_speed": 1.911739196572029,
+      "max_acceleration": 1.9590352091698253,
+      "requested_duration_sec": 60,
+      "max_spline_speed_bound": 1.9853572592738036,
+      "max_spline_acceleration_bound": 1.999886776380756,
+      "frontier_points": {
+        "active": 2538,
+        "dormant": 57564,
+        "tiny": 19251
+      },
+      "first_plan_sec": 3.6487408459943254,
+      "last_motion_sec": 31.444083869995666,
+      "fsm_finished": true,
+      "elapsed_sec": 60.000618617006694,
+      "task_box_volume": 1680,
+      "known_task_box_fraction": 0.14675409226190475,
+      "ground_truth": {
+        "clearance_lower_bound": 0.6190918435,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": false
+      },
+      "passed": true
+    },
+    {
+      "map": "power_plant",
+      "trajectories": 27,
+      "commands": 5800,
+      "invalid_commands": 0,
+      "coverage_start": 63.52000045776367,
+      "coverage_final": 623.280029296875,
+      "distance": 37.37176246107251,
+      "command_jumps": 0,
+      "max_command_step": 0.034567728010860325,
+      "max_speed": 1.905993183370525,
+      "max_acceleration": 1.9794084505976965,
+      "requested_duration_sec": 60,
+      "max_spline_speed_bound": 1.981374560098278,
+      "max_spline_acceleration_bound": 1.999095461678399,
+      "frontier_points": {
+        "active": 29040,
+        "dormant": 11880,
+        "tiny": 624
+      },
+      "first_plan_sec": 4.551257957005873,
+      "last_motion_sec": 59.99538084800588,
+      "fsm_finished": false,
+      "elapsed_sec": 60.005103310002596,
+      "task_box_volume": 5670,
+      "known_task_box_fraction": 0.10992593109292328,
+      "ground_truth": {
+        "clearance_lower_bound": 0.6865708039,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": false
+      },
+      "passed": true
+    },
+    {
+      "map": "complex_office",
+      "trajectories": 90,
+      "commands": 5859,
+      "invalid_commands": 0,
+      "coverage_start": 53.265625,
+      "coverage_final": 577.71875,
+      "distance": 56.35882177940492,
+      "command_jumps": 0,
+      "max_command_step": 0.035998978864046176,
+      "max_speed": 1.964580358716209,
+      "max_acceleration": 1.9953096999285806,
+      "requested_duration_sec": 60,
+      "max_spline_speed_bound": 1.97539578233758,
+      "max_spline_acceleration_bound": 1.999956313396384,
+      "frontier_points": {
+        "active": 19224,
+        "dormant": 31212,
+        "tiny": 27
+      },
+      "first_plan_sec": 3.642837959996541,
+      "last_motion_sec": 59.85314538900275,
+      "fsm_finished": false,
+      "elapsed_sec": 60.00558964800439,
+      "task_box_volume": 1800,
+      "known_task_box_fraction": 0.3209548611111111,
+      "ground_truth": {
+        "clearance_lower_bound": 0.4541340465,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": true
+      },
+      "passed": true
+    },
+    {
+      "map": "duplex_office",
+      "trajectories": 91,
+      "commands": 5887,
+      "invalid_commands": 0,
+      "coverage_start": 48.71875,
+      "coverage_final": 627.953125,
+      "distance": 52.25251003524298,
+      "command_jumps": 0,
+      "max_command_step": 0.03365864303419092,
+      "max_speed": 1.9630152083023418,
+      "max_acceleration": 1.9959643346699183,
+      "requested_duration_sec": 60,
+      "max_spline_speed_bound": 1.9993435315781476,
+      "max_spline_acceleration_bound": 1.9996233541731692,
+      "frontier_points": {
+        "active": 27567,
+        "dormant": 66096,
+        "tiny": 10503
+      },
+      "first_plan_sec": 3.6194470249902224,
+      "last_motion_sec": 59.999347412987845,
+      "fsm_finished": false,
+      "elapsed_sec": 60.00812565899105,
+      "task_box_volume": 1600,
+      "known_task_box_fraction": 0.392470703125,
+      "ground_truth": {
+        "clearance_lower_bound": 0.4246841813,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": true
+      },
+      "passed": true
+    },
+    {
+      "map": "classical_office",
+      "trajectories": 95,
+      "commands": 5945,
+      "invalid_commands": 0,
+      "coverage_start": 39.78125,
+      "coverage_final": 501.671875,
+      "distance": 43.247689208727806,
+      "command_jumps": 0,
+      "max_command_step": 0.020365059651872935,
+      "max_speed": 1.7357698135401793,
+      "max_acceleration": 1.9965781138484537,
+      "requested_duration_sec": 60,
+      "max_spline_speed_bound": 1.98046558480851,
+      "max_spline_acceleration_bound": 1.9981075064904301,
+      "frontier_points": {
+        "active": 9990,
+        "dormant": 3456,
+        "tiny": 18981
+      },
+      "first_plan_sec": 3.6253215600008843,
+      "last_motion_sec": 60.006357917009154,
+      "fsm_finished": false,
+      "elapsed_sec": 60.006917176011484,
+      "task_box_volume": 900,
+      "known_task_box_fraction": 0.5574131944444445,
+      "ground_truth": {
+        "clearance_lower_bound": 0.5178326533,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": false
+      },
+      "passed": true
+    },
+    {
+      "map": "octa_maze",
+      "trajectories": 90,
+      "commands": 5920,
+      "invalid_commands": 0,
+      "coverage_start": 58.203125,
+      "coverage_final": 564.90625,
+      "distance": 44.0769318915137,
+      "command_jumps": 0,
+      "max_command_step": 0.03275449123318708,
+      "max_speed": 1.77459810009588,
+      "max_acceleration": 1.99846047746833,
+      "requested_duration_sec": 60,
+      "max_spline_speed_bound": 1.986033578194628,
+      "max_spline_acceleration_bound": 1.9996255412087958,
+      "frontier_points": {
+        "active": 36639,
+        "dormant": 13770,
+        "tiny": 5211
+      },
+      "first_plan_sec": 3.4558464489964535,
+      "last_motion_sec": 60.00361726799747,
+      "fsm_finished": false,
+      "elapsed_sec": 60.00414513499709,
+      "task_box_volume": 2394.32,
+      "known_task_box_fraction": 0.23593598600020046,
+      "ground_truth": {
+        "clearance_lower_bound": 0.3550214579,
+        "unsafe_samples": 0,
+        "radius": 0.2,
+        "source_is_mesh": true
+      },
+      "passed": true
+    }
+  ],
+  "extended_power_plant": {
+    "map": "power_plant",
+    "trajectories": 42,
+    "commands": 11816,
+    "invalid_commands": 0,
+    "coverage_start": 63.52000045776367,
+    "coverage_final": 911.6079711914062,
+    "distance": 64.81178201469807,
+    "command_jumps": 0,
+    "max_command_step": 0.02224259391193422,
+    "max_speed": 1.954341688371077,
+    "max_acceleration": 1.9951382174463255,
+    "requested_duration_sec": 120,
+    "max_spline_speed_bound": 1.9973522314934569,
+    "max_spline_acceleration_bound": 1.9957080812636367,
+    "frontier_points": {
+      "active": 36648,
+      "dormant": 29976,
+      "tiny": 720
+    },
+    "first_plan_sec": 4.3808031780063175,
+    "last_motion_sec": 118.88248471300176,
+    "fsm_finished": false,
+    "elapsed_sec": 120.002968478002,
+    "task_box_volume": 5670,
+    "known_task_box_fraction": 0.160777419963211,
+    "ground_truth": {
+      "clearance_lower_bound": 0.5782663151,
+      "unsafe_samples": 0,
+      "radius": 0.2,
+      "source_is_mesh": false
+    },
+    "passed": true
+  }
+}

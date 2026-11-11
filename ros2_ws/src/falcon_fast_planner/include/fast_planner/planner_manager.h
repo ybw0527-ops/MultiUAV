@@ -18,6 +18,7 @@ struct PlanParameters {
   double max_vel_{0.0}, max_acc_{0.0}; // physical limits
   double ctrl_pt_dist_{0.0};           // distance between adjacent B-spline control points
   double boundary_clearance_{0.3};
+  double collision_clearance_{0.2};
 };
 
 struct LocalTrajData {
@@ -56,7 +57,8 @@ public:
   ~FastPlannerManager() = default;
 
   void init(rclcpp::Node &node);
-  void planExplorationPositionTraj(const std::vector<Eigen::Vector3d> &tour,
+  // False means no curve satisfying hard derivative bounds could be generated.
+  bool planExplorationPositionTraj(const std::vector<Eigen::Vector3d> &tour,
                                    const Eigen::Vector3d &cur_vel, const Eigen::Vector3d &cur_acc,
                                    const double &time_lb, const bool verbose = false);
   void planExplorationYawWaypointsTraj(const double &cur_yaw, const double &cur_yaw_vel,
@@ -75,6 +77,7 @@ public:
   voxel_mapping::MapServer::Ptr map_server_;
 
 private:
+  bool isCurveSafe(NonUniformBspline curve, double start_time, bool log);
   void calcNextYaw(const double &last_yaw, double &yaw);
 
   std::vector<BsplineOptimizer::Ptr> bspline_optimizers_;

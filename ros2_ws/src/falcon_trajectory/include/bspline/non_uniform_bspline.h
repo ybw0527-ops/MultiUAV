@@ -51,6 +51,9 @@ public:
 
   bool checkFeasibility(bool show = false);
   bool reallocateTime(bool show = false);
+  // Convex-hull bounds on Euclidean speed and acceleration over the full curve.
+  // Invalid/degenerate derivative knots return infinity, so callers fail closed.
+  Eigen::Vector2d derivativeNormBounds() const;
 
   // Evaluation
   double getTimeSum();

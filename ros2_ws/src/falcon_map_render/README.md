@@ -59,10 +59,18 @@ nonfinite points, and invalid odometry are handled explicitly.
 
 Validation from the sourced workspace:
 
-The recorded baseline is `test/autonomous_run_summary.json`: all six 60-second
+The initial baseline is `test/autonomous_run_summary.json`: all six 60-second
 runs passed, with geometry clearance lower bounds of 0.284-0.707 m. The complete
 workspace reported 49 passing colcon checks. These are observed runs, not exact
 numerical expectations for later runs.
+
+The newer `test/linear_limits_run_summary.json` records 53 passing workspace
+checks, six 60-second runs with hard linear-motion limits, and a 120-second power
+plant run. The isolated native planner/server suites also passed 20 repetitions
+(180 case executions). One earlier shared-domain parallel run exited with SIGSEGV;
+its cause was not captured and did not reproduce during debugger or isolated
+native repetitions. That lifecycle observation remains recorded for follow-up.
+ROS planner/server gtests now use Humble's native isolated-domain runner.
 
 ```bash
 cd ros2_ws
@@ -85,12 +93,15 @@ It publishes a shared `/clock` from monotonic elapsed time and gives each map a
 fresh process and ROS domain. It requires at least two trajectories, more than
 one meter of motion after the first plan, increased known volume, finite flight
 commands, no position jump larger than `0.5 + 3*dt` meters, and no node failure or
-rejected trajectory. A run must keep moving during its final 15 seconds unless
+rejected trajectory. It also requires both the received spline's continuous
+derivative bounds and the executed commands to stay within 2 m/s and 2 m/s²,
+using Euclidean vector norms. A run must keep moving during its final 15 seconds unless
 the FSM has announced completion. It saves logs, sampled positions, and JSON metrics under
 `/tmp/falcon_autonomous` (change with `--output`). `fsm_finished` records whether
 the FSM announced completion; a bounded run can pass while exploration continues.
-Completion of the FSM means no active frontiers remain; dormant frontiers can
-still exist, so this is not a complete-coverage certificate.
+The announcement means no active frontier was detected at that point. Dormant
+frontiers and later rediscovery can still exist, so this boolean is not a
+complete-coverage certificate or a claim about the final frontier list.
 The test uses a 160x120 camera, 0.25 m mapping, and 0.5 m coarse mapping. Power plant
 uses the original 0.1/0.2 m resolutions and all pixels because the coarse setting
 could not generate a usable initial viewpoint in that environment. Its sensor
@@ -110,5 +121,28 @@ Known volume is measured within the task box in cubic meters. The reported
 space; it is not a percentage of reachable free space. These tests use ideal
 command-to-odometry execution and do not establish SO3/dynamics tracking, strict
 dynamic feasibility, or complete six-map mission coverage targets.
-The upstream feasibility costs are soft and per axis; acceleration spikes can
-still occur. The recorded maxima are diagnostic metrics, not hard-limit checks.
+The optimizer still uses soft costs. The planner now retimes cubic curves while
+preserving the input position, velocity, and acceleration, fixes the goal at rest,
+and checks derivative control-point norms. By the B-spline convex-hull property,
+these bound speed and acceleration over the entire curve. The backup
+spline is checked too; failed feasibility returns to the FSM for stopping and
+replanning. When both the fitted path and the optimized curve are feasible, the
+shorter-duration candidate is tried first and the other is retained for the FSM's
+collision-checked fallback. The trajectory server independently rejects any incoming position
+spline whose bounds exceed the configured limits, keeping its previous valid
+trajectory. This does not establish angular limits, jerk/thrust limits, physical
+braking during emergency stops, or SO3/dynamics tracking.
+
+Online collision checks require the center to be in known free space and test a
+vehicle sphere against occupied voxel boxes. `fast_planner.collision_clearance`
+sets the sphere radius (default 0.2 m); half a sampling interval times the speed
+limit is added to cover motion between 0.02 s checks. Both candidate curves are
+checked over their full duration before selection and checked again by the FSM.
+Unknown neighboring volume and unobserved obstacles remain uncertified; the
+independent original-geometry regression is still required. The trusted handoff
+body itself is treated as known free when its sensor's near-range blind spot
+leaves the center unobserved. This exception is limited to the configured vehicle
+radius around that handoff and never overrides occupied center or neighbor cells.
+Failed plans refresh frontier observations before retrying stale viewpoints.
+Shutdown is also checked. The harness signals the launch process once and lets
+it stop its nodes; a node crash during teardown fails the run.

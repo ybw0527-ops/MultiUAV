@@ -12,6 +12,23 @@ NonUniformBspline::NonUniformBspline() {}
 
 NonUniformBspline::~NonUniformBspline() {}
 
+Eigen::Vector2d NonUniformBspline::derivativeNormBounds() const {
+  const double infinity = std::numeric_limits<double>::infinity();
+  if (p_ < 2 || control_points_.rows() <= p_ || control_points_.cols() < 1 ||
+      !control_points_.allFinite() || !u_.allFinite() || u_.size() != control_points_.rows()+p_+1)
+    return {infinity,infinity};
+  for (Eigen::Index i=1;i<u_.size();++i)
+    if (u_[i] < u_[i-1]) return {infinity,infinity};
+  auto curve = *this;
+  const auto velocity = curve.getDerivative();
+  auto velocity_copy = velocity;
+  const auto acceleration = velocity_copy.getDerivative();
+  if (!velocity.control_points_.allFinite() || !acceleration.control_points_.allFinite())
+    return {infinity,infinity};
+  return {velocity.control_points_.rowwise().norm().maxCoeff(),
+          acceleration.control_points_.rowwise().norm().maxCoeff()};
+}
+
 void NonUniformBspline::setUniformBspline(const Eigen::MatrixXd &points, const int &order,
                                           const double &interval) {
   if (order < 0 || points.rows() <= order || points.cols() < 1 || interval <= 0.0)

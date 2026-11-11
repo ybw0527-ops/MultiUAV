@@ -233,7 +233,42 @@ The autonomous regression stage adds:
 The next targets are full-mission coverage targets across all six environments,
 tracking with the SO3/dynamics simulator, and later GPU acceleration.
 
-The autonomous milestone records 49 passing colcon checks and six passing
+The linear-motion validation stage adds continuous Euclidean derivative bounds
+for B-splines, cubic retiming with exact initial position/velocity/acceleration and
+a stationary endpoint, and independent rejection of infeasible incoming curves
+at the trajectory server. Both fitted and optimized candidates, including the
+collision fallback, must pass the hard bounds; the faster feasible candidate is
+preferred. Failed feasibility returns a planning failure for a stop/retry rather
+than publishing an over-limit curve. The live regression checks both full-curve
+bounds and executed command vectors against 2 m/s and 2 m/s². This does not yet
+validate angular limits, jerk/thrust, physical emergency braking, or SO3 tracking.
+
+Candidate and live-trajectory collision checks now require known free center
+voxels and account for the vehicle sphere against occupied voxel AABBs, including
+a speed-dependent margin between samples. The default collision radius is 0.2 m.
+This closes the center-only check that allowed an otherwise dynamically feasible
+curve to pass too close to a tunnel wall. Candidate safety is checked before
+selection so an unsafe candidate can fall back to another observed viewpoint.
+The sensor blind spot at a trusted handoff is limited to that existing body
+radius; occupied cells remain forbidden and unobserved travel beyond it is
+rejected. Failed plans refresh frontier observations to avoid retrying stale
+viewpoints while mapping continues.
+
+The recorded linear-motion baseline reports 53 passing colcon checks, six passing
+60-second live runs, and a passing 120-second power plant run. Both complete
+position splines and executed command vectors satisfy the configured Euclidean
+2 m/s and 2 m/s² limits. See
+`ros2_ws/src/falcon_map_render/test/linear_limits_run_summary.json` for observed
+values and the full limitations. Each recorded run has four clean node exits.
+
+Planner/server gtests use Humble's native isolated ROS-domain runner and passed
+20 native repetitions (100 planner plus 80 server case executions). An earlier
+default-domain parallel run exited with SIGSEGV during the fifth planner test;
+no causal stack was captured. It did not recur in 50 debugger repetitions or the
+isolated native repetitions. The exact cause remains unconfirmed and is retained
+as a lifecycle/testing observation rather than asserted to be fixed.
+
+The initial autonomous milestone records 49 passing colcon checks and six passing
 60-second live runs, including the final-window progress check. See
 `ros2_ws/src/falcon_map_render/test/autonomous_run_summary.json` for the observed
 metrics and explicit limits. The smallest recorded geometry clearance lower
@@ -304,9 +339,10 @@ ros2 run falcon_fast_planner trajectory_server_node --ros-args \
 ## Known upstream issues to preserve or address explicitly
 
 - The upstream implementation is ROS 1 Noetic and uses catkin/nodelets.
-- Velocity and acceleration feasibility costs are soft and per axis in the upstream
-  B-spline optimizer. Recorded commands can contain acceleration spikes; hard-limit
-  validation and dynamically tracked execution remain required before flight use.
+- The upstream optimizer's feasibility costs remain soft and per axis. The ROS 2
+  planner and execution server now additionally enforce Euclidean linear speed
+  and acceleration bounds on complete position splines. Angular, jerk/thrust,
+  emergency-braking dynamics, and tracked execution remain unvalidated.
 - The lightweight simulator is not Gazebo and uses rendered depth plus synthetic odometry.
 - The repository does not currently provide a root license file; redistribution terms
   must be confirmed before publishing a derivative repository.

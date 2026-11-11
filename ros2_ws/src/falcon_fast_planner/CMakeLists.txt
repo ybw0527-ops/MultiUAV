@@ -72,11 +72,12 @@ ament_export_dependencies(
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_planner_manager test/test_planner_manager.cpp)
+  find_package(ament_cmake_ros REQUIRED)
+  ament_add_ros_isolated_gtest(test_planner_manager test/test_planner_manager.cpp)
   target_link_libraries(test_planner_manager ${PROJECT_NAME})
   ament_target_dependencies(test_planner_manager rclcpp)
 
-  ament_add_gtest(test_trajectory_server test/test_trajectory_server.cpp)
+  ament_add_ros_isolated_gtest(test_trajectory_server test/test_trajectory_server.cpp)
   target_link_libraries(test_trajectory_server ${PROJECT_NAME})
   ament_target_dependencies(test_trajectory_server falcon_interfaces rclcpp)
 endif()

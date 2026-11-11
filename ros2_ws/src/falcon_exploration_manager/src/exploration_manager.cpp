@@ -993,7 +993,12 @@ int ExplorationManager::planExploreMotionHGrid(const Vector3d &pos, const Vector
       recovered = true;
       break;
     }
-    if (!recovered) return FAIL;
+    if (!recovered) {
+      // Mapping continues while a plan runs. Refresh before retrying so a
+      // changed or blocked viewpoint does not remain the goal indefinitely.
+      if (updateFrontierStruct(pos)==0) return NO_GRID;
+      return FAIL;
+    }
   }
 
   // Time analysis for total planning
@@ -1086,10 +1091,10 @@ EXPL_RESULT ExplorationManager::planTrajToView(const Vector3d &pos, const Vector
       truncated_path.push_back(cur_pt);
     }
     ed_->next_goal_ = truncated_path.back();
-    planner_manager_->planExplorationPositionTraj(truncated_path, vel, acc, time_lb, false);
+    if (!planner_manager_->planExplorationPositionTraj(truncated_path, vel, acc, time_lb, false)) return FAIL;
   } else {
     ed_->next_goal_ = next_pos_local;
-    planner_manager_->planExplorationPositionTraj(ed_->path_next_goal_, vel, acc, time_lb, false);
+    if (!planner_manager_->planExplorationPositionTraj(ed_->path_next_goal_, vel, acc, time_lb, false)) return FAIL;
   }
 
   if (planner_manager_->local_data_.position_traj_.getTimeSum() < time_lb)

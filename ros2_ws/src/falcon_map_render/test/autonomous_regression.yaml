@@ -1,6 +1,9 @@
 /**:
   ros__parameters:
     uav_model:
+      dynamics_parameters:
+        max_linear_velocity: 2.0
+        max_linear_acceleration: 2.0
       sensing_parameters:
         image_width: 160
         image_height: 120

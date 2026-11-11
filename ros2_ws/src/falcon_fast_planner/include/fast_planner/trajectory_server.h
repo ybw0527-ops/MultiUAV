@@ -55,6 +55,7 @@ private:
   falcon_interfaces::msg::PositionCommand command_template_;
   falcon_interfaces::msg::PositionCommand last_command_;
   bool has_last_command_{false};
+  double max_velocity_{2.0}, max_acceleration_{2.0};
   PerceptionUtils::Ptr perception_utils_;
 
   Eigen::Vector3d initial_position_{Eigen::Vector3d::Zero()};

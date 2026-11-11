@@ -24,6 +24,11 @@ double normalizeYaw(double yaw) {
 TrajectoryServer::TrajectoryServer(const rclcpp::NodeOptions &options)
     : rclcpp::Node("trajectory_server", options) {
   world_frame_ = declare_parameter<std::string>("traj_server.world_frame", world_frame_);
+  max_velocity_ = declare_parameter<double>("uav_model.dynamics_parameters.max_linear_velocity",2.0);
+  max_acceleration_ = declare_parameter<double>("uav_model.dynamics_parameters.max_linear_acceleration",2.0);
+  if (!std::isfinite(max_velocity_) || !std::isfinite(max_acceleration_) ||
+      max_velocity_<=0 || max_acceleration_<=0)
+    throw std::invalid_argument("Trajectory speed/acceleration limits must be finite and positive");
   perform_initial_motion_ =
       declare_parameter<bool>("traj_server.perform_initial_motion", perform_initial_motion_);
 
@@ -96,7 +101,7 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
     if (message.traj_id < 0 ||
         static_cast<uint64_t>(message.traj_id) > std::numeric_limits<uint32_t>::max())
       throw std::invalid_argument("Trajectory ID must fit the PositionCommand uint32 field");
-    if (message.order < 1 || message.pos_pts.size() <= static_cast<size_t>(message.order))
+    if (message.order != 3 || message.pos_pts.size() <= static_cast<size_t>(message.order))
       throw std::invalid_argument("Position B-spline has too few control points");
     const size_t expected_knots =
         message.pos_pts.size() + static_cast<size_t>(message.order) + 1U;
@@ -140,6 +145,9 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
     if (!std::isfinite(duration) || duration <= 0.0 ||
         std::fabs(duration - yaw_duration) > std::max(1e-3, duration * 1e-3))
       throw std::invalid_argument("Position and yaw trajectory durations must match");
+    const auto bounds=position_trajectory.derivativeNormBounds();
+    if (bounds[0]>max_velocity_+1e-6 || bounds[1]>max_acceleration_+1e-6)
+      throw std::invalid_argument("Position spline exceeds hard speed/acceleration bounds");
 
     std::vector<NonUniformBspline> parsed;
     parsed.reserve(6);
@@ -149,6 +157,8 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
     parsed.push_back(yaw_trajectory);
     parsed.push_back(parsed[3].getDerivative());
     parsed.push_back(parsed[2].getDerivative());
+    if (!parsed[5].getControlPoint().allFinite())
+      throw std::invalid_argument("Position spline has degenerate derivative knots");
 
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (message.traj_id <= trajectory_id_)

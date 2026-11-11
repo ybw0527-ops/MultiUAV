@@ -110,6 +110,26 @@ TEST(TrajectoryServerTest, RejectsMalformedAndMisorderedTrajectories) {
   EXPECT_NE(error.find("knot count"), std::string::npos);
 }
 
+TEST(TrajectoryServerTest, RejectsWholeCurveDerivativeViolationsAndKeepsPreviousTrajectory) {
+  ensureRosInitialized();
+  auto server=std::make_shared<TrajectoryServer>(serverOptions());
+  auto message=makeTrajectoryMessage(server->now());
+  std::string error;
+  ASSERT_TRUE(server->setTrajectory(message,&error)) << error;
+  message.traj_id++;
+  for(auto &knot:message.knots) knot*=0.05;
+  message.yaw_dt*=0.05;
+  EXPECT_FALSE(server->setTrajectory(message,&error));
+  EXPECT_NE(error.find("hard speed/acceleration"),std::string::npos);
+  EXPECT_EQ(server->trajectoryId(),7);
+  message=makeTrajectoryMessage(server->now()); message.traj_id=8;
+  for(size_t i=0;i<message.pos_pts.size();++i) {
+    message.pos_pts[i].x=1.6*i; message.pos_pts[i].y=1.6*i;
+  }
+  EXPECT_FALSE(server->setTrajectory(message,&error)); // Each axis is <2; norm is >2.
+  EXPECT_EQ(server->trajectoryId(),7);
+}
+
 TEST(TrajectoryServerTest, HoldsLastPositionWhileReplacementStartsInFuture) {
   ensureRosInitialized();
   auto server = std::make_shared<TrajectoryServer>(serverOptions());

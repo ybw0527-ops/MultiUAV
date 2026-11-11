@@ -41,6 +41,12 @@ rclcpp::NodeOptions plannerNodeOptions() {
   return options;
 }
 
+void markFree(FastPlannerManager &manager) {
+  auto grid=manager.map_server_->getOccupancyGrid();
+  for(int address=0;address<manager.map_server_->getVoxelNum();++address)
+    grid->setOccupancy(address,voxel_mapping::OccupancyType::FREE);
+}
+
 TEST(FastPlannerManagerTest, PlansPositionYawAndChecksCollision) {
   ensureRosInitialized();
   auto node = std::make_shared<rclcpp::Node>("fast_planner_manager_test", plannerNodeOptions());
@@ -59,8 +65,12 @@ TEST(FastPlannerManagerTest, PlansPositionYawAndChecksCollision) {
       Eigen::Vector3d(0.2, 0.0, 1.0),
       Eigen::Vector3d(0.4, 0.0, 1.0),
   };
-  manager.planExplorationPositionTraj(tour, Eigen::Vector3d::Zero(),
-                                      Eigen::Vector3d::Zero(), 0.0);
+  EXPECT_FALSE(manager.planExplorationPositionTraj(tour,Eigen::Vector3d::Zero(),
+                                                  Eigen::Vector3d::Zero(),0.0));
+  EXPECT_EQ(manager.local_data_.traj_id_,0);
+  markFree(manager);
+  ASSERT_TRUE(manager.planExplorationPositionTraj(tour, Eigen::Vector3d::Zero(),
+                                      Eigen::Vector3d::Zero(), 0.0));
 
   EXPECT_EQ(manager.local_data_.traj_id_, 1);
   EXPECT_GT(manager.local_data_.duration_, 0.0);
@@ -83,6 +93,15 @@ TEST(FastPlannerManagerTest, PlansPositionYawAndChecksCollision) {
   near_boundary.col(2).setConstant(1.0);
   manager.local_data_.position_traj_ = NonUniformBspline(near_boundary,3,0.1);
   manager.local_data_.duration_ = manager.local_data_.position_traj_.getTimeSum();
+  EXPECT_FALSE(manager.checkTrajCollision());
+  // A free center voxel is insufficient when the vehicle intersects its neighbor.
+  near_boundary.col(0).setConstant(0.8);
+  near_boundary.col(2).setConstant(2.0);
+  manager.local_data_.position_traj_=NonUniformBspline(near_boundary,3,0.1);
+  manager.local_data_.duration_=manager.local_data_.position_traj_.getTimeSum();
+  auto occupied=manager.map_server_->getOccupancyGrid();
+  occupied->setOccupancy(occupied->positionToAddress(Eigen::Vector3d(1.5,0.5,2.5)),voxel_mapping::OccupancyType::OCCUPIED);
+  EXPECT_EQ(manager.map_server_->getOccupancy(Eigen::Vector3d(0.8,0,2)),voxel_mapping::OccupancyType::FREE);
   EXPECT_FALSE(manager.checkTrajCollision());
   // Even a trajectory shorter than the sample interval must check its endpoints.
   near_boundary.col(0).setConstant(0.0);
@@ -120,6 +139,7 @@ TEST(FastPlannerManagerTest, PlansMultiSegmentTourWithFiniteTiming) {
                                              plannerNodeOptions());
   FastPlannerManager manager;
   manager.init(*node);
+  markFree(manager);
 
   const std::vector<Eigen::Vector3d> tour{
       Eigen::Vector3d(-0.6, -0.3, 3.0),
@@ -127,8 +147,8 @@ TEST(FastPlannerManagerTest, PlansMultiSegmentTourWithFiniteTiming) {
       Eigen::Vector3d(0.2, -0.1, 3.0),
       Eigen::Vector3d(0.6, 0.3, 3.1),
   };
-  manager.planExplorationPositionTraj(tour, Eigen::Vector3d(0.1, 0.0, 0.0),
-                                      Eigen::Vector3d::Zero(), 1.0);
+  ASSERT_TRUE(manager.planExplorationPositionTraj(tour, Eigen::Vector3d(0.1, 0.0, 0.0),
+                                      Eigen::Vector3d::Zero(), 1.0));
 
   EXPECT_TRUE(std::isfinite(manager.local_data_.duration_));
   EXPECT_GE(manager.local_data_.duration_, 1.0);
@@ -136,9 +156,46 @@ TEST(FastPlannerManagerTest, PlansMultiSegmentTourWithFiniteTiming) {
   EXPECT_TRUE(manager.local_data_.start_pos_.isApprox(tour.front(),1e-9));
   EXPECT_TRUE(manager.local_data_.velocity_traj_.evaluateDeBoorT(0.0).isApprox(Eigen::Vector3d(0.1,0,0),1e-9));
   EXPECT_LT(manager.local_data_.acceleration_traj_.evaluateDeBoorT(0.0).norm(),1e-9);
+  const auto bounds=manager.local_data_.position_traj_.derivativeNormBounds();
+  EXPECT_LE(bounds[0],manager.pp_.max_vel_+1e-6);
+  EXPECT_LE(bounds[1],manager.pp_.max_acc_+1e-6);
+  const auto fallback_bounds=manager.local_data_.init_traj_bspline_.derivativeNormBounds();
+  EXPECT_LE(fallback_bounds[0],manager.pp_.max_vel_+1e-6);
+  EXPECT_LE(fallback_bounds[1],manager.pp_.max_acc_+1e-6);
+  EXPECT_LT(manager.local_data_.velocity_traj_.evaluateDeBoorT(manager.local_data_.duration_).norm(),1e-9);
+  EXPECT_LT(manager.local_data_.acceleration_traj_.evaluateDeBoorT(manager.local_data_.duration_).norm(),1e-9);
   EXPECT_TRUE(manager.local_data_.position_traj_
                   .evaluateDeBoorT(manager.local_data_.duration_)
                   .allFinite());
+}
+
+TEST(FastPlannerManagerTest, RetimesShortReverseTourAndRejectsOverspeedHandoff) {
+  ensureRosInitialized();
+  auto node=std::make_shared<rclcpp::Node>("short_reverse_test",plannerNodeOptions());
+  FastPlannerManager manager; manager.init(*node);
+  markFree(manager);
+  const std::vector<Eigen::Vector3d> tour{{0,0,2},{-0.1,0.05,2},{-0.2,0.1,2}};
+  ASSERT_TRUE(manager.planExplorationPositionTraj(tour,{0.5,0,0},{0.1,0,0},0.0));
+  const auto bounds=manager.local_data_.position_traj_.derivativeNormBounds();
+  EXPECT_LE(bounds[0],2.0+1e-6); EXPECT_LE(bounds[1],2.0+1e-6);
+  EXPECT_NEAR(manager.local_data_.velocity_traj_.evaluateDeBoorT(0)[0],0.5,1e-9);
+  EXPECT_NEAR(manager.local_data_.acceleration_traj_.evaluateDeBoorT(0)[0],0.1,1e-9);
+  EXPECT_FALSE(manager.planExplorationPositionTraj(tour,{1.8,1.8,0},Eigen::Vector3d::Zero(),0.0));
+}
+
+TEST(FastPlannerManagerTest, LeavesSensorBlindSpotButRejectsUnobservedTravel) {
+  ensureRosInitialized();
+  auto node=std::make_shared<rclcpp::Node>("sensor_blind_spot_test",plannerNodeOptions());
+  FastPlannerManager manager; manager.init(*node); markFree(manager);
+  auto grid=manager.map_server_->getOccupancyGrid();
+  const std::vector<Eigen::Vector3d> tour{{0.99,0,2},{1.4,0,2}};
+  grid->setOccupancy(grid->positionToAddress(tour.front()),voxel_mapping::OccupancyType::UNKNOWN);
+  ASSERT_TRUE(manager.planExplorationPositionTraj(tour,Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero(),0.0));
+  const int accepted_id=manager.local_data_.traj_id_;
+  for(int address=0;address<manager.map_server_->getVoxelNum();++address)
+    grid->setOccupancy(address,voxel_mapping::OccupancyType::UNKNOWN);
+  EXPECT_FALSE(manager.planExplorationPositionTraj(tour,Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero(),0.0));
+  EXPECT_EQ(manager.local_data_.traj_id_,accepted_id);
 }
 
 } // namespace
