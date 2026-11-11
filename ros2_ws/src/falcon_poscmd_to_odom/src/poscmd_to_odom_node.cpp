@@ -10,6 +10,7 @@
 #include "falcon_interfaces/msg/position_command.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "falcon_poscmd_to_odom/attitude.h"
 
 namespace falcon_poscmd_to_odom
 {
@@ -65,18 +66,13 @@ private:
 
     const Eigen::Vector3d acceleration(
       command_.acceleration.x, command_.acceleration.y, command_.acceleration.z);
-    const Eigen::Vector3d alpha = acceleration + 9.8 * Eigen::Vector3d::UnitZ();
-    const Eigen::Vector3d x_heading(std::cos(command_.yaw), std::sin(command_.yaw), 0.0);
-    const Eigen::Vector3d y_heading(-x_heading.y(), x_heading.x(), 0.0);
-    const Eigen::Vector3d x_body = y_heading.cross(alpha).normalized();
-    const Eigen::Vector3d y_body = alpha.cross(x_body).normalized();
-    const Eigen::Vector3d z_body = x_body.cross(y_body);
-
-    Eigen::Matrix3d rotation;
-    rotation.col(0) = x_body;
-    rotation.col(1) = y_body;
-    rotation.col(2) = z_body;
-    const Eigen::Quaterniond orientation(rotation);
+    const Eigen::Vector3d jerk(command_.jerk.x,command_.jerk.y,command_.jerk.z);
+    Eigen::Quaterniond orientation;
+    Eigen::Vector3d body_rate;
+    if (!attitudeAndBodyRate(acceleration,jerk,command_.yaw,command_.yaw_dot,orientation,body_rate)) {
+      RCLCPP_WARN_THROTTLE(get_logger(),*get_clock(),1000,"Invalid or singular attitude command");
+      return;
+    }
 
     odometry.pose.pose.orientation.w = orientation.w();
     odometry.pose.pose.orientation.x = orientation.x();
@@ -84,9 +80,9 @@ private:
     odometry.pose.pose.orientation.z = orientation.z();
     odometry.twist.twist.linear = command_.velocity;
 
-    // Preserve the upstream simulator contract. These fields carry commanded
-    // acceleration even though nav_msgs names them angular velocity.
-    odometry.twist.twist.angular = command_.acceleration;
+    odometry.twist.twist.angular.x = body_rate.x();
+    odometry.twist.twist.angular.y = body_rate.y();
+    odometry.twist.twist.angular.z = body_rate.z();
     odometry_publisher_->publish(odometry);
   }
 

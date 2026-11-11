@@ -58,7 +58,7 @@ falcon_interfaces::msg::Bspline makeTrajectoryMessage(const rclcpp::Time &start_
     point.y = position_points(index, 1);
     point.z = position_points(index, 2);
   }
-  message.yaw_pts = {0.0, 0.0, 0.2, 0.4, 0.5, 0.5};
+  message.yaw_pts = {0.0, 0.0, 0.2, 0.5, 0.5, 0.5};
   message.yaw_dt = 1.0;
   return message;
 }
@@ -165,6 +165,67 @@ TEST(TrajectoryServerTest, HoldsLastPositionWhileReplacementStartsInFuture) {
   EXPECT_DOUBLE_EQ(last.position.z,held.z);
   EXPECT_DOUBLE_EQ(last.velocity.x,0.0);
   EXPECT_DOUBLE_EQ(last.acceleration.x,0.0);
+}
+
+TEST(TrajectoryServerTest, RejectsYawRateAndAccelerationViolations) {
+  ensureRosInitialized();
+  auto server=std::make_shared<TrajectoryServer>(serverOptions());
+  auto message=makeTrajectoryMessage(server->now());
+  std::string error;
+  ASSERT_TRUE(server->setTrajectory(message,&error)) << error;
+  message.traj_id++;
+  for(size_t i=0;i<message.yaw_pts.size();++i) message.yaw_pts[i]=2.0*i;
+  EXPECT_FALSE(server->setTrajectory(message,&error));
+  EXPECT_NE(error.find("Yaw spline exceeds"),std::string::npos);
+  EXPECT_EQ(server->trajectoryId(),7);
+  for(size_t i=0;i<message.yaw_pts.size();++i) message.yaw_pts[i]=(i%2 ? 0.75 : -0.75);
+  // Rate control hull is only 1.5 rad/s; acceleration is 3 rad/s^2.
+  EXPECT_FALSE(server->setTrajectory(message,&error));
+  EXPECT_NE(error.find("Yaw spline exceeds"),std::string::npos);
+  EXPECT_EQ(server->trajectoryId(),7);
+  message=makeTrajectoryMessage(server->now()); message.traj_id=8;
+  message.yaw_pts.back()+=0.01;
+  EXPECT_FALSE(server->setTrajectory(message,&error));
+  EXPECT_NE(error.find("Yaw spline must end at rest"),std::string::npos);
+  EXPECT_EQ(server->trajectoryId(),7);
+}
+
+TEST(TrajectoryServerTest, ExplicitStopsBrakeYawWithoutRateDiscontinuity) {
+  ensureRosInitialized();
+  for(int type : {0,1,2}) {
+    auto server=std::make_shared<TrajectoryServer>(serverOptions());
+    auto sender=std::make_shared<rclcpp::Node>("yaw_stop_test");
+    auto publisher=sender->create_publisher<std_msgs::msg::Int32>("/planning/replan",10);
+    const auto start=server->now()-rclcpp::Duration::from_seconds(0.5);
+    auto message=makeTrajectoryMessage(start);
+    ASSERT_TRUE(server->setTrajectory(message));
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(server); executor.add_node(sender);
+    auto until=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while(server->trajectoryDuration()>=3.0 && std::chrono::steady_clock::now()<until) {
+      std_msgs::msg::Int32 stop; stop.data=type; publisher->publish(stop);
+      executor.spin_some(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const double cut=server->trajectoryDuration();
+    ASSERT_LT(cut,3.0);
+    falcon_interfaces::msg::PositionCommand previous, command;
+    ASSERT_TRUE(server->sampleCommand(start+rclcpp::Duration::from_seconds(cut),previous));
+    ASSERT_GT(previous.yaw_dot,0.01);
+    const auto stopped_position=previous.position;
+    for(int i=1;i<=100;++i) {
+      ASSERT_TRUE(server->sampleCommand(start+rclcpp::Duration::from_seconds(cut+0.01*i),command));
+      EXPECT_LE(std::abs(command.yaw_dot-previous.yaw_dot),M_PI/2*0.01+1e-7);
+      EXPECT_LE(std::abs(std::remainder(command.yaw-previous.yaw,2*M_PI)),0.01*M_PI/2+1e-7);
+      EXPECT_NEAR(command.position.x,stopped_position.x,1e-9);
+      EXPECT_DOUBLE_EQ(command.velocity.x,0.0);
+      previous=command;
+    }
+    EXPECT_DOUBLE_EQ(command.yaw_dot,0.0);
+    // Repeated FINISH/STOP messages must not move the stopping point or restart braking.
+    std_msgs::msg::Int32 stop; stop.data=type; publisher->publish(stop);
+    executor.spin_some();
+    EXPECT_DOUBLE_EQ(server->trajectoryDuration(),cut);
+  }
 }
 
 } // namespace

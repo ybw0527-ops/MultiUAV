@@ -130,8 +130,35 @@ replanning. When both the fitted path and the optimized curve are feasible, the
 shorter-duration candidate is tried first and the other is retained for the FSM's
 collision-checked fallback. The trajectory server independently rejects any incoming position
 spline whose bounds exceed the configured limits, keeping its previous valid
-trajectory. This does not establish angular limits, jerk/thrust limits, physical
-braking during emergency stops, or SO3/dynamics tracking.
+trajectory. This does not establish roll/pitch, jerk/thrust limits, physical
+translation braking during emergency stops, or SO3/dynamics tracking.
+
+Yaw planning reserves a constructive turning duration before position planning.
+It preserves the initial yaw/rate/acceleration and ends at rest. After restoring
+these exact states to the optimizer output, the planner checks the full yaw
+derivative control hulls and falls back to a quintic-shaped cubic curve when
+needed. An infeasible yaw plan is rejected, including in the FSM collision
+fallback; yaw is never independently stretched away from the position clock.
+The trajectory server independently enforces `max_yaw_velocity` and
+`max_yaw_acceleration` (both default pi/2, in rad/s and rad/s²) and terminal rest.
+Explicit STOP/FINISH messages decelerate yaw at the angular acceleration limit;
+repeated messages do not restart the deceleration. Translation still holds
+immediately on these messages and is not a physical emergency-braking model.
+The FSM waits for fresh translational and angular rest before a static retry.
+
+The command-to-odometry adapter now differentiates its flatness attitude to
+publish body angular velocity. Upstream placed linear acceleration in that field;
+no ROS 2 consumer should depend on that legacy encoding. A finite-difference
+attitude test independently checks the angular velocity mapping. The live harness
+checks whole-curve yaw bounds, yaw command continuity modulo 2 pi, and finite-
+difference command yaw acceleration, including replans and stops. These remain
+kinematic checks and do not certify roll/pitch actuator limits or tracked flight.
+
+The observed yaw-limit baseline is recorded in `test/yaw_limits_run_summary.json`:
+60 passing colcon checks and six passing 60-second live runs. The runs contain no
+position/yaw command jumps or unsafe source-geometry samples, with a minimum
+geometry clearance lower bound of 0.371 m. These are bounded-duration observations,
+not complete exploration missions or exact numerical golden expectations.
 
 Online collision checks require the center to be in known free space and test a
 vehicle sphere against occupied voxel boxes. `fast_planner.collision_clearance`

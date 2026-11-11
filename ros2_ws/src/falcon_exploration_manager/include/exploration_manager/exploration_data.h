@@ -23,6 +23,7 @@ struct FSMData {
   Eigen::Vector3d odom_pos_, odom_vel_; // odometry state
   Eigen::Quaterniond odom_orient_;
   double odom_yaw_;
+  double odom_angular_speed_{0.0};
 
   Eigen::Vector3d start_pos_, start_vel_, start_acc_, start_yaw_; // start state
   vector<Eigen::Vector3d> start_poss;

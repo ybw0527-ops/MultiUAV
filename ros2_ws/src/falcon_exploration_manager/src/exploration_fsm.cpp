@@ -285,7 +285,8 @@ void ExplorationFSM::FSMCallback() {
 
   case PLAN_TRAJ: {
     if (waiting_for_stop_) {
-      if (last_odom_stamp_ < stop_requested_time_ || fd_->odom_vel_.norm() > 0.05) break;
+      if (last_odom_stamp_ < stop_requested_time_ || fd_->odom_vel_.norm() > 0.05 ||
+          fd_->odom_angular_speed_ > 1e-3) break;
       waiting_for_stop_ = false;
     }
     int cur_cell_id, cur_center_id;
@@ -425,12 +426,12 @@ void ExplorationFSM::FSMCallback() {
       planner_manager_->local_data_.end_pos_ =
           planner_manager_->local_data_.position_traj_.evaluateDeBoorT(
               planner_manager_->local_data_.duration_);
-      planner_manager_->planExplorationYawWaypointsTraj(
-          fd_->start_yaw_(0), fd_->start_yaw_(1), goal_yaw, {}, {});
+      const bool yaw_safe = planner_manager_->planExplorationYawWaypointsTraj(
+          fd_->start_yaw_(0), fd_->start_yaw_(1), goal_yaw, {}, {}, fd_->start_yaw_(2));
 
       bool safe_init_path = planner_manager_->checkTrajCollision();
 
-      if (!safe_init_path) {
+      if (!safe_init_path || !yaw_safe) {
         RCLCPP_ERROR(node_->get_logger(), "[FSM] Replan: collision also detected on the initial trajectory");
 
         stopAndWaitForOdometry();
@@ -878,9 +879,11 @@ void ExplorationFSM::stopAndWaitForOdometry() {
 void ExplorationFSM::odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg) {
   const auto &p = msg->pose.pose.position;
   const auto &v = msg->twist.twist.linear;
+  const auto &angular = msg->twist.twist.angular;
   const auto &q = msg->pose.pose.orientation;
   const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
   if (!Eigen::Vector3d(p.x,p.y,p.z).allFinite() || !Eigen::Vector3d(v.x,v.y,v.z).allFinite() ||
+      !Eigen::Vector3d(angular.x,angular.y,angular.z).allFinite() ||
       !orientation.coeffs().allFinite() || orientation.norm() < 1e-6 ||
       expl_manager_->hierarchical_grid_->getLayerCellId(0, Eigen::Vector3d(p.x,p.y,p.z)) < 0) {
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000, "Ignoring invalid or out-of-map odometry");
@@ -894,6 +897,7 @@ void ExplorationFSM::odometryCallback(const nav_msgs::msg::Odometry::ConstShared
   fd_->odom_vel_(0) = msg->twist.twist.linear.x;
   fd_->odom_vel_(1) = msg->twist.twist.linear.y;
   fd_->odom_vel_(2) = msg->twist.twist.linear.z;
+  fd_->odom_angular_speed_ = Eigen::Vector3d(angular.x,angular.y,angular.z).norm();
 
   fd_->odom_orient_.w() = msg->pose.pose.orientation.w;
   fd_->odom_orient_.x() = msg->pose.pose.orientation.x;

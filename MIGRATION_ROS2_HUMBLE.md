@@ -240,8 +240,37 @@ at the trajectory server. Both fitted and optimized candidates, including the
 collision fallback, must pass the hard bounds; the faster feasible candidate is
 preferred. Failed feasibility returns a planning failure for a stop/retry rather
 than publishing an over-limit curve. The live regression checks both full-curve
-bounds and executed command vectors against 2 m/s and 2 m/s². This does not yet
-validate angular limits, jerk/thrust, physical emergency braking, or SO3 tracking.
+bounds and executed command vectors against 2 m/s and 2 m/s². That baseline did not
+validate yaw limits, jerk/thrust, physical emergency braking, or SO3 tracking.
+
+The yaw validation stage adds continuous scalar rate/acceleration bounds (default
+pi/2 rad/s and pi/2 rad/s²), exact yaw/rate/acceleration handoffs and terminal
+rest, a constructive turn-duration reservation coordinated with position timing,
+and a checked fallback when soft yaw optimization violates the limits. The FSM's
+position fallback must also pass yaw feasibility. Incoming curves are checked
+independently at the trajectory server. STOP/FINISH now brake yaw at the configured
+acceleration instead of instantaneously zeroing its rate; static retries wait
+for angular rest. Translation stopping remains instantaneous and unvalidated
+as physical braking.
+
+The lightweight odometry adapter differentiates its existing flatness attitude
+to emit body angular velocity instead of the upstream linear-acceleration payload
+in `twist.angular`. Tests compare it with an independent attitude finite
+difference. Live regressions measure full yaw spline bounds and executed yaw
+rate/acceleration through replans, wrap crossings and explicit stops. Roll/pitch
+actuation, jerk/thrust, SO3 tracking and full reachable-space coverage remain open.
+
+The recorded yaw baseline reports 60 passing colcon checks and six passing
+60-second live runs. Across those runs, the maximum command yaw rate was
+1.543 rad/s, finite-difference command yaw acceleration was at most pi/2 rad/s²
+within numerical tolerance, and all complete yaw spline control-hull bounds
+were below pi/2. No position/yaw jumps or unsafe source-geometry samples were
+observed. The minimum recorded geometry-clearance lower bound was 0.371 m for
+a 0.2 m vehicle radius. See
+`ros2_ws/src/falcon_map_render/test/yaw_limits_run_summary.json` for observations
+and limits; FSM FINISH announcements are not full-coverage certificates.
+Both isolated planner/server suites also passed 20 native repetitions each
+(120 planner plus 120 server case executions).
 
 Candidate and live-trajectory collision checks now require known free center
 voxels and account for the vehicle sphere against occupied voxel AABBs, including
@@ -341,8 +370,9 @@ ros2 run falcon_fast_planner trajectory_server_node --ros-args \
 - The upstream implementation is ROS 1 Noetic and uses catkin/nodelets.
 - The upstream optimizer's feasibility costs remain soft and per axis. The ROS 2
   planner and execution server now additionally enforce Euclidean linear speed
-  and acceleration bounds on complete position splines. Angular, jerk/thrust,
-  emergency-braking dynamics, and tracked execution remain unvalidated.
+  and acceleration bounds on complete position and yaw splines. Roll/pitch,
+  jerk/thrust, translational emergency-braking dynamics, and tracked execution
+  remain unvalidated.
 - The lightweight simulator is not Gazebo and uses rendered depth plus synthetic odometry.
 - The repository does not currently provide a root license file; redistribution terms
   must be confirmed before publishing a derivative repository.

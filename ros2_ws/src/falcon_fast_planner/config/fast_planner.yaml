@@ -4,6 +4,8 @@
       dynamics_parameters:
         max_linear_velocity: 2.0
         max_linear_acceleration: 2.0
+        max_yaw_velocity: 1.57079632679
+        max_yaw_acceleration: 1.57079632679
       sensing_parameters:
         fov:
           horizontal: 1.500983156

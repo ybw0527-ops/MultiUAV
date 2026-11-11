@@ -43,10 +43,12 @@ private:
   void recordCommand(const falcon_interfaces::msg::PositionCommand &command,
                      const rclcpp::Time &time);
   static double pathLength(const std::vector<Eigen::Vector3d> &path);
+  Eigen::Vector2d sampleYaw(double relative_time) const;
 
   mutable std::mutex trajectory_mutex_;
   std::vector<NonUniformBspline> trajectory_;
   double trajectory_duration_{0.0};
+  double yaw_duration_{0.0};
   rclcpp::Time start_time_{0, 0, RCL_ROS_TIME};
   int64_t trajectory_id_{-1};
   bool received_trajectory_{false};
@@ -56,6 +58,9 @@ private:
   falcon_interfaces::msg::PositionCommand last_command_;
   bool has_last_command_{false};
   double max_velocity_{2.0}, max_acceleration_{2.0};
+  double max_yaw_velocity_{1.57079632679}, max_yaw_acceleration_{1.57079632679};
+  bool yaw_stop_active_{false};
+  double yaw_stop_time_{0.0}, yaw_stop_yaw_{0.0}, yaw_stop_rate_{0.0};
   PerceptionUtils::Ptr perception_utils_;
 
   Eigen::Vector3d initial_position_{Eigen::Vector3d::Zero()};

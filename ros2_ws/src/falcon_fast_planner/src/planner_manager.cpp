@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -23,6 +24,39 @@ void readParameter(rclcpp::Node &node, const std::string &name, T &value,
 }
 
 using PlannerClock = std::chrono::steady_clock;
+
+constexpr int yaw_segments = 12;
+
+void anchorYaw(Eigen::MatrixXd &points, double dt, double yaw, double rate,
+               double acceleration, double goal) {
+  points(0,0) = yaw-dt*rate+dt*dt/3.0*acceleration;
+  points(1,0) = yaw-dt*dt/6.0*acceleration;
+  points(2,0) = yaw+dt*rate+dt*dt/3.0*acceleration;
+  points.bottomRows(3).setConstant(goal);
+}
+
+// Sample a quintic handoff-to-rest shape, then impose the exact cubic endpoint
+// states. Acceptance uses derivative control hulls, not these shape samples.
+NonUniformBspline yawFallback(double duration, double yaw, double rate,
+                             double acceleration, double goal) {
+  const double dt = duration/yaw_segments;
+  const double delta = goal-yaw, v = rate*duration, a = acceleration*duration*duration;
+  const double c3 = 10*delta-6*v-1.5*a;
+  const double c4 = -15*delta+8*v+1.5*a;
+  const double c5 = 6*delta-3*v-0.5*a;
+  Eigen::MatrixXd points(yaw_segments+3,1);
+  for (int i=0;i<points.rows();++i) {
+    const double u = std::clamp((i-1.0)/yaw_segments,0.0,1.0);
+    points(i,0) = yaw+v*u+0.5*a*u*u+c3*std::pow(u,3)+c4*std::pow(u,4)+c5*std::pow(u,5);
+  }
+  anchorYaw(points,dt,yaw,rate,acceleration,goal);
+  return NonUniformBspline(points,3,dt);
+}
+
+bool yawWithinLimits(const NonUniformBspline &curve, double rate, double acceleration) {
+  const auto bounds = curve.derivativeNormBounds();
+  return bounds[0]<=rate+1e-8 && bounds[1]<=acceleration+1e-8;
+}
 
 bool feasibleCubic(const Eigen::MatrixXd &shape, double dt,
                    const Eigen::Vector3d &position, const Eigen::Vector3d &velocity,
@@ -68,6 +102,8 @@ void FastPlannerManager::init(rclcpp::Node &node) {
   readParameter(node, "uav_model.dynamics_parameters.max_linear_velocity", pp_.max_vel_, -1.0);
   readParameter(node, "uav_model.dynamics_parameters.max_linear_acceleration", pp_.max_acc_,
                 -1.0);
+  readParameter(node, "uav_model.dynamics_parameters.max_yaw_velocity", pp_.max_yaw_vel_, M_PI/2.0);
+  readParameter(node, "uav_model.dynamics_parameters.max_yaw_acceleration", pp_.max_yaw_acc_, M_PI/2.0);
   readParameter(node, "fast_planner.control_points_distance", pp_.ctrl_pt_dist_, -1.0);
   readParameter(node, "bspline_opt.boundary_clearance", pp_.boundary_clearance_, 0.3);
   readParameter(node, "fast_planner.collision_clearance", pp_.collision_clearance_, 0.2);
@@ -79,6 +115,9 @@ void FastPlannerManager::init(rclcpp::Node &node) {
       !std::isfinite(pp_.collision_clearance_) || pp_.collision_clearance_ < 0.0)
     throw std::invalid_argument("Fast planner velocity, acceleration, and control-point distance "
                                 "parameters must be positive");
+  if (!std::isfinite(pp_.max_yaw_vel_) || !std::isfinite(pp_.max_yaw_acc_) ||
+      pp_.max_yaw_vel_<=0 || pp_.max_yaw_acc_<=0)
+    throw std::invalid_argument("Yaw rate and acceleration limits must be finite and positive");
 
   local_data_.traj_id_ = 0;
   map_server_ = std::make_shared<voxel_mapping::MapServer>(node);
@@ -411,23 +450,45 @@ bool FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Ve
   return true;
 }
 
-void FastPlannerManager::planExplorationYawWaypointsTraj(
+double FastPlannerManager::yawDurationLowerBound(double yaw, double rate,
+                                                double acceleration, double goal) const {
+  if (!std::isfinite(yaw) || !std::isfinite(rate) || !std::isfinite(acceleration) ||
+      !std::isfinite(goal) || std::abs(rate)>pp_.max_yaw_vel_+1e-8 ||
+      std::abs(acceleration)>pp_.max_yaw_acc_+1e-8)
+    return std::numeric_limits<double>::infinity();
+  goal = yaw+std::remainder(goal-yaw,2*M_PI);
+  for (double duration=0.1;duration<=120;duration*=1.08) {
+    if (yawWithinLimits(yawFallback(duration,yaw,rate,acceleration,goal),
+                        pp_.max_yaw_vel_,pp_.max_yaw_acc_))
+      return duration;
+  }
+  return std::numeric_limits<double>::infinity();
+}
+
+bool FastPlannerManager::planExplorationYawWaypointsTraj(
     const double &cur_yaw, const double &cur_yaw_vel, const double &goal_yaw,
-    const std::vector<Eigen::Vector3d> &yaw_waypts, const std::vector<int> &yaw_waypts_idx) {
+    const std::vector<Eigen::Vector3d> &yaw_waypts, const std::vector<int> &yaw_waypts_idx,
+    double cur_yaw_acc) {
   if (node_ == nullptr || bspline_optimizers_.size() < 2)
     throw std::logic_error("FastPlannerManager must be initialized before yaw planning");
   if (local_data_.duration_ <= 0.0 || !std::isfinite(local_data_.duration_))
     throw std::logic_error("A valid position trajectory is required before yaw planning");
-  if (!std::isfinite(cur_yaw) || !std::isfinite(cur_yaw_vel) || !std::isfinite(goal_yaw) ||
+  if (!std::isfinite(cur_yaw) || !std::isfinite(cur_yaw_vel) || !std::isfinite(cur_yaw_acc) || !std::isfinite(goal_yaw) ||
       yaw_waypts.size() != yaw_waypts_idx.size())
     throw std::invalid_argument("Yaw inputs must be finite and waypoint arrays must match");
+  for (size_t i=0;i<yaw_waypts.size();++i)
+    if (!yaw_waypts[i].allFinite() || yaw_waypts_idx[i]<0 || yaw_waypts_idx[i]>yaw_segments)
+      throw std::invalid_argument("Yaw waypoints must be finite and inside the segment range");
+  if (std::abs(cur_yaw_vel)>pp_.max_yaw_vel_+1e-8 ||
+      std::abs(cur_yaw_acc)>pp_.max_yaw_acc_+1e-8) return false;
 
   const auto t1 = PlannerClock::now();
 
-  const int seg_num = 12;
+  const int seg_num = yaw_segments;
   double dt_yaw = local_data_.duration_ / seg_num; // time of B-spline segment
+  const double unwrapped_goal = cur_yaw+std::remainder(goal_yaw-cur_yaw,2*M_PI);
   Eigen::Vector3d start_yaw3d(cur_yaw, 0, 0);
-  Eigen::Vector3d end_yaw3d(goal_yaw, 0, 0);
+  Eigen::Vector3d end_yaw3d(unwrapped_goal, 0, 0);
 
   // Yaw traj control points
   Eigen::MatrixXd yaw(seg_num + 3, 1);
@@ -446,14 +507,24 @@ void FastPlannerManager::planExplorationYawWaypointsTraj(
   int cost_func = BsplineOptimizer::EXPLORATION_YAW_PHASE;
 
   vector<Eigen::Vector3d> start = {Eigen::Vector3d(start_yaw3d[0], start_yaw3d[1], start_yaw3d[2]),
-                                   Eigen::Vector3d(cur_yaw_vel, 0, 0), Eigen::Vector3d(0, 0, 0)};
+                                   Eigen::Vector3d(cur_yaw_vel, 0, 0), Eigen::Vector3d(cur_yaw_acc, 0, 0)};
   vector<Eigen::Vector3d> end = {Eigen::Vector3d(end_yaw3d[0], 0, 0), Eigen::Vector3d(0, 0, 0)};
   bspline_optimizers_[1]->setBoundaryStates(start, end);
   bspline_optimizers_[1]->setWaypoints(yaw_waypts, yaw_waypts_idx);
   bspline_optimizers_[1]->optimize(yaw, dt_yaw, cost_func);
 
+  // Optimizer boundary costs are soft. Restore the actual handoff and terminal
+  // states before testing the entire curve. Never independently stretch yaw:
+  // the position spline must keep the same clock and its exact handoff state.
+  anchorYaw(yaw,dt_yaw,cur_yaw,cur_yaw_vel,cur_yaw_acc,unwrapped_goal);
+  NonUniformBspline accepted(yaw,3,dt_yaw);
+  if (!yawWithinLimits(accepted,pp_.max_yaw_vel_,pp_.max_yaw_acc_)) {
+    accepted = yawFallback(local_data_.duration_,cur_yaw,cur_yaw_vel,cur_yaw_acc,unwrapped_goal);
+    if (!yawWithinLimits(accepted,pp_.max_yaw_vel_,pp_.max_yaw_acc_)) return false;
+  }
+
   // Update traj info
-  local_data_.yaw_traj_.setUniformBspline(yaw, 3, dt_yaw);
+  local_data_.yaw_traj_ = std::move(accepted);
   local_data_.yawdot_traj_ = local_data_.yaw_traj_.getDerivative();
   local_data_.yawdotdot_traj_ = local_data_.yawdot_traj_.getDerivative();
 
@@ -468,6 +539,7 @@ void FastPlannerManager::planExplorationYawWaypointsTraj(
 
   RCLCPP_INFO(node_->get_logger(), "Yaw trajectory optimization time: %.3f ms",
               elapsedMilliseconds(t1));
+  return true;
 }
 
 void FastPlannerManager::calcNextYaw(const double &last_yaw, double &yaw) {

@@ -26,8 +26,11 @@ TrajectoryServer::TrajectoryServer(const rclcpp::NodeOptions &options)
   world_frame_ = declare_parameter<std::string>("traj_server.world_frame", world_frame_);
   max_velocity_ = declare_parameter<double>("uav_model.dynamics_parameters.max_linear_velocity",2.0);
   max_acceleration_ = declare_parameter<double>("uav_model.dynamics_parameters.max_linear_acceleration",2.0);
+  max_yaw_velocity_ = declare_parameter<double>("uav_model.dynamics_parameters.max_yaw_velocity", M_PI/2.0);
+  max_yaw_acceleration_ = declare_parameter<double>("uav_model.dynamics_parameters.max_yaw_acceleration", M_PI/2.0);
   if (!std::isfinite(max_velocity_) || !std::isfinite(max_acceleration_) ||
-      max_velocity_<=0 || max_acceleration_<=0)
+      max_velocity_<=0 || max_acceleration_<=0 || !std::isfinite(max_yaw_velocity_) ||
+      !std::isfinite(max_yaw_acceleration_) || max_yaw_velocity_<=0 || max_yaw_acceleration_<=0)
     throw std::invalid_argument("Trajectory speed/acceleration limits must be finite and positive");
   perform_initial_motion_ =
       declare_parameter<bool>("traj_server.perform_initial_motion", perform_initial_motion_);
@@ -148,6 +151,9 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
     const auto bounds=position_trajectory.derivativeNormBounds();
     if (bounds[0]>max_velocity_+1e-6 || bounds[1]>max_acceleration_+1e-6)
       throw std::invalid_argument("Position spline exceeds hard speed/acceleration bounds");
+    const auto yaw_bounds = yaw_trajectory.derivativeNormBounds();
+    if (yaw_bounds[0]>max_yaw_velocity_+1e-6 || yaw_bounds[1]>max_yaw_acceleration_+1e-6)
+      throw std::invalid_argument("Yaw spline exceeds hard rate/acceleration bounds");
 
     std::vector<NonUniformBspline> parsed;
     parsed.reserve(6);
@@ -157,6 +163,10 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
     parsed.push_back(yaw_trajectory);
     parsed.push_back(parsed[3].getDerivative());
     parsed.push_back(parsed[2].getDerivative());
+    auto yaw_acceleration = parsed[4].getDerivative();
+    if (std::abs(parsed[4].evaluateDeBoorT(yaw_duration)[0])>1e-6 ||
+        std::abs(yaw_acceleration.evaluateDeBoorT(yaw_duration)[0])>1e-6)
+      throw std::invalid_argument("Yaw spline must end at rest with zero angular acceleration");
     if (!parsed[5].getControlPoint().allFinite())
       throw std::invalid_argument("Position spline has degenerate derivative knots");
 
@@ -165,9 +175,11 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
       throw std::invalid_argument("Trajectory IDs must be strictly increasing");
     trajectory_ = std::move(parsed);
     trajectory_duration_ = duration;
+    yaw_duration_ = yaw_duration;
     start_time_ = rclcpp::Time(message.start_time, RCL_ROS_TIME);
     trajectory_id_ = message.traj_id;
     received_trajectory_ = true;
+    yaw_stop_active_ = false;
     task_finished_ = false;
     if (flight_start_time_.nanoseconds() == 0)
       flight_start_time_ = now();
@@ -197,8 +209,9 @@ bool TrajectoryServer::sampleCommand(
       finished ? Eigen::Vector3d::Zero() : trajectory_[2].evaluateDeBoorT(evaluation_time);
   const Eigen::Vector3d jerk =
       finished ? Eigen::Vector3d::Zero() : trajectory_[5].evaluateDeBoorT(evaluation_time);
-  const double yaw = normalizeYaw(trajectory_[3].evaluateDeBoorT(evaluation_time)[0]);
-  const double yaw_rate = finished ? 0.0 : trajectory_[4].evaluateDeBoorT(evaluation_time)[0];
+  const auto yaw_state = sampleYaw(relative_time);
+  const double yaw = normalizeYaw(yaw_state[0]);
+  const double yaw_rate = yaw_state[1];
   if (!position.allFinite() || !velocity.allFinite() || !acceleration.allFinite() ||
       !jerk.allFinite() || !std::isfinite(yaw) || !std::isfinite(yaw_rate))
     return false;
@@ -238,6 +251,22 @@ int64_t TrajectoryServer::trajectoryId() const {
   return trajectory_id_;
 }
 
+// Called with trajectory_mutex_ held. Explicit position stops brake yaw at the
+// configured angular acceleration instead of discontinuously zeroing its rate.
+Eigen::Vector2d TrajectoryServer::sampleYaw(double relative_time) const {
+  if (yaw_stop_active_ && relative_time>=yaw_stop_time_) {
+    const double duration = std::abs(yaw_stop_rate_)/max_yaw_acceleration_;
+    const double dt = std::clamp(relative_time-yaw_stop_time_,0.0,duration);
+    const double acceleration = -std::copysign(max_yaw_acceleration_,yaw_stop_rate_);
+    return {yaw_stop_yaw_+yaw_stop_rate_*dt+0.5*acceleration*dt*dt,
+            relative_time-yaw_stop_time_>=duration ? 0.0 : yaw_stop_rate_+acceleration*dt};
+  }
+  const double duration = yaw_duration_;
+  const double time = std::clamp(relative_time,0.0,duration);
+  return {trajectory_[3].evaluateDeBoorT(time)[0],
+          relative_time>=duration ? 0.0 : trajectory_[4].evaluateDeBoorT(time)[0]};
+}
+
 void TrajectoryServer::bsplineCallback(
     const falcon_interfaces::msg::Bspline::SharedPtr message) {
   std::string error;
@@ -254,17 +283,26 @@ void TrajectoryServer::replanCallback(const std_msgs::msg::Int32::SharedPtr mess
   if (!received_trajectory_)
     return;
   const double elapsed = std::max(0.0, (now() - start_time_).seconds());
+  double stop_time = trajectory_duration_;
   if (message->data == 0) {
-    trajectory_duration_ = std::min(trajectory_duration_, elapsed + 0.5);
+    stop_time = std::min(trajectory_duration_, elapsed + 0.5);
   } else if (message->data == 1) {
-    trajectory_duration_ = std::min(trajectory_duration_, elapsed);
+    stop_time = std::min(trajectory_duration_, elapsed);
     RCLCPP_WARN(get_logger(), "Collision replan requested; stopping the current trajectory");
   } else if (message->data == 2) {
-    trajectory_duration_ = std::min(trajectory_duration_, elapsed);
+    stop_time = std::min(trajectory_duration_, elapsed);
     task_finished_ = true;
     RCLCPP_WARN(get_logger(), "Exploration-finished replan requested");
   } else {
     RCLCPP_ERROR(get_logger(), "Invalid replan type: %d", message->data);
+  }
+  if (stop_time<trajectory_duration_) {
+    const auto yaw_state = sampleYaw(stop_time);
+    yaw_stop_time_ = stop_time;
+    yaw_stop_yaw_ = yaw_state[0];
+    yaw_stop_rate_ = yaw_state[1];
+    yaw_stop_active_ = true;
+    trajectory_duration_ = stop_time;
   }
 }
 

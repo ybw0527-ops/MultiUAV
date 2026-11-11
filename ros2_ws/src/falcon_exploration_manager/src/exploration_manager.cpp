@@ -1053,7 +1053,8 @@ EXPL_RESULT ExplorationManager::planTrajToView(const Vector3d &pos, const Vector
   auto t1 = rclcpp::Clock(RCL_STEADY_TIME).now();
 
   // Compute time lower bound of yaw and use in trajectory generation
-  const double time_lb = yaw_distance / PathCostEvaluator::yd_;
+  const double time_lb = planner_manager_->yawDurationLowerBound(yaw[0],yaw[1],yaw[2],next_yaw);
+  if (!std::isfinite(time_lb)) return FAIL;
 
   Vector3d next_pos_local = next_pos;
   double next_yaw_local = next_yaw;
@@ -1374,8 +1375,8 @@ EXPL_RESULT ExplorationManager::planTrajToView(const Vector3d &pos, const Vector
     yaw_waypts_idx.push_back(i);
   }
 
-  planner_manager_->planExplorationYawWaypointsTraj(start_yaw, yaw[1], goal_yaw, yaw_waypts,
-                                                    yaw_waypts_idx);
+  if (!planner_manager_->planExplorationYawWaypointsTraj(start_yaw, yaw[1], goal_yaw, yaw_waypts,
+                                                       yaw_waypts_idx, yaw[2])) return FAIL;
   visualization_->drawYawWaypointsTraj(planner_manager_->local_data_.position_traj_,
                                        planner_manager_->local_data_.yaw_traj_, dt_yaw, yaw_waypts,
                                        yaw_waypts_idx);

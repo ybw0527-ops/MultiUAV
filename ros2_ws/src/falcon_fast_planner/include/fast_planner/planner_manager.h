@@ -16,6 +16,7 @@
 namespace fast_planner {
 struct PlanParameters {
   double max_vel_{0.0}, max_acc_{0.0}; // physical limits
+  double max_yaw_vel_{1.57079632679}, max_yaw_acc_{1.57079632679};
   double ctrl_pt_dist_{0.0};           // distance between adjacent B-spline control points
   double boundary_clearance_{0.3};
   double collision_clearance_{0.2};
@@ -61,10 +62,13 @@ public:
   bool planExplorationPositionTraj(const std::vector<Eigen::Vector3d> &tour,
                                    const Eigen::Vector3d &cur_vel, const Eigen::Vector3d &cur_acc,
                                    const double &time_lb, const bool verbose = false);
-  void planExplorationYawWaypointsTraj(const double &cur_yaw, const double &cur_yaw_vel,
+  // Constructive duration bound for a shortest-turn yaw curve with exact handoff state.
+  double yawDurationLowerBound(double yaw, double rate, double acceleration, double goal) const;
+  bool planExplorationYawWaypointsTraj(const double &cur_yaw, const double &cur_yaw_vel,
                                        const double &goal_yaw,
                                        const std::vector<Eigen::Vector3d> &yaw_waypts,
-                                       const std::vector<int> &yaw_waypts_idx);
+                                       const std::vector<int> &yaw_waypts_idx,
+                                       double cur_yaw_acc = 0.0);
   bool checkTrajCollision();
 
   // Save traj_id, duration, evaluated position, velocity, acceleration

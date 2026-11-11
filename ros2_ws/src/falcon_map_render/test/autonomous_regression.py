@@ -54,6 +54,11 @@ def main():
     result['requested_duration_sec'] = args.duration
     result['max_spline_speed_bound'] = 0.0
     result['max_spline_acceleration_bound'] = 0.0
+    result['max_spline_yaw_rate_bound'] = 0.0
+    result['max_spline_yaw_acceleration_bound'] = 0.0
+    result['max_yaw_rate'] = 0.0
+    result['max_command_yaw_acceleration'] = 0.0
+    result['yaw_command_jumps'] = 0
     result['shutdown_forced'] = False
     result['frontier_points'] = {'active': 0, 'dormant': 0, 'tiny': 0}
     samples = []
@@ -62,20 +67,22 @@ def main():
 
     def trajectory(msg):
         result['trajectories'] += 1
-        points = [(p.x, p.y, p.z) for p in msg.pos_pts]
-        knots = list(msg.knots)
-        for derivative in (1, 2):
-            degree = msg.order - derivative + 1
-            next_points = []
-            for i in range(len(points) - 1):
-                denominator = knots[i + degree + 1] - knots[i + 1]
-                if denominator <= 0:
-                    next_points.append((math.inf,) * 3)
-                else:
-                    next_points.append(tuple(degree * (b-a) / denominator for a, b in zip(points[i], points[i+1])))
-            points, knots = next_points, knots[1:-1]
-            key = 'max_spline_speed_bound' if derivative == 1 else 'max_spline_acceleration_bound'
-            result[key] = max(result[key], max(math.hypot(*p) for p in points))
+        for yaw in (False, True):
+            points = [(p,) for p in msg.yaw_pts] if yaw else [(p.x, p.y, p.z) for p in msg.pos_pts]
+            knots = [msg.yaw_dt * (i-3) for i in range(len(points)+4)] if yaw else list(msg.knots)
+            for derivative in (1, 2):
+                degree = 4-derivative if yaw else msg.order-derivative+1
+                next_points = []
+                for i in range(len(points) - 1):
+                    denominator = knots[i + degree + 1] - knots[i + 1]
+                    if denominator <= 0:
+                        next_points.append((math.inf,) * len(points[i]))
+                    else:
+                        next_points.append(tuple(degree * (b-a) / denominator for a, b in zip(points[i], points[i+1])))
+                points, knots = next_points, knots[1:-1]
+                keys = ('max_spline_yaw_rate_bound', 'max_spline_yaw_acceleration_bound') if yaw else ('max_spline_speed_bound', 'max_spline_acceleration_bound')
+                key = keys[derivative-1]
+                result[key] = max(result[key], max(math.hypot(*p) for p in points))
         if result['coverage_start'] is None:
             result['coverage_start'] = result['coverage_final']
             result['first_plan_sec'] = time.monotonic() - start
@@ -100,9 +107,16 @@ def main():
                 result['max_command_step'] = max(result['max_command_step'], step)
                 if step > 0.5 + 3.0 * max(0.0, stamp - previous_command[0]):
                     result['command_jumps'] += 1
-            previous_command = (stamp, point)
+                dt = stamp - previous_command[0]
+                if 1e-3 < dt < 0.2:
+                    yaw_step = abs(math.remainder(msg.yaw-previous_command[2],2*math.pi))
+                    if yaw_step > 0.05 + math.pi/2*dt:
+                        result['yaw_command_jumps'] += 1
+                    result['max_command_yaw_acceleration'] = max(result['max_command_yaw_acceleration'], abs(msg.yaw_dot-previous_command[3])/dt)
+            previous_command = (stamp, point, msg.yaw, msg.yaw_dot)
             result['max_speed'] = max(result['max_speed'], math.hypot(*values[3:6]))
             result['max_acceleration'] = max(result['max_acceleration'], math.hypot(*values[8:11]))
+            result['max_yaw_rate'] = max(result['max_yaw_rate'], abs(msg.yaw_dot))
 
     def odom(msg):
         nonlocal previous
@@ -191,6 +205,11 @@ def main():
     assert result['max_acceleration'] <= 2.0 + 1e-5, 'Command acceleration exceeds 2 m/s^2'
     assert result['max_spline_speed_bound'] <= 2.0 + 1e-5, 'Whole spline exceeds speed limit'
     assert result['max_spline_acceleration_bound'] <= 2.0 + 1e-5, 'Whole spline exceeds acceleration limit'
+    assert result['max_yaw_rate'] <= math.pi/2 + 1e-5, 'Command yaw rate exceeds limit'
+    assert result['max_spline_yaw_rate_bound'] <= math.pi/2 + 1e-5, 'Whole yaw spline exceeds rate limit'
+    assert result['max_spline_yaw_acceleration_bound'] <= math.pi/2 + 1e-5, 'Whole yaw spline exceeds acceleration limit'
+    assert result['yaw_command_jumps'] == 0, 'Flight command yaw jumped'
+    assert result['max_command_yaw_acceleration'] <= math.pi/2 + 0.05, 'Command yaw rate jumped'
     assert result['command_jumps'] == 0, 'Flight command position jumped'
     assert result['trajectories'] >= 2, 'No exploration/replanning trajectory'
     assert result['distance'] > 1.0, 'No executed exploration motion'

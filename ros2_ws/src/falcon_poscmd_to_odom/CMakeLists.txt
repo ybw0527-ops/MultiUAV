@@ -16,6 +16,7 @@ find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 
 add_executable(poscmd_to_odom_node src/poscmd_to_odom_node.cpp)
+target_include_directories(poscmd_to_odom_node PRIVATE include)
 target_link_libraries(poscmd_to_odom_node Eigen3::Eigen)
 ament_target_dependencies(poscmd_to_odom_node
   falcon_interfaces
@@ -26,5 +27,12 @@ ament_target_dependencies(poscmd_to_odom_node
 install(TARGETS poscmd_to_odom_node
   DESTINATION lib/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_attitude test/test_attitude.cpp)
+  target_include_directories(test_attitude PRIVATE include)
+  target_link_libraries(test_attitude Eigen3::Eigen)
+endif()
 
 ament_package()

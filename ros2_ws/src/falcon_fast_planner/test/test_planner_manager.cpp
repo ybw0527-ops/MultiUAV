@@ -70,7 +70,7 @@ TEST(FastPlannerManagerTest, PlansPositionYawAndChecksCollision) {
   EXPECT_EQ(manager.local_data_.traj_id_,0);
   markFree(manager);
   ASSERT_TRUE(manager.planExplorationPositionTraj(tour, Eigen::Vector3d::Zero(),
-                                      Eigen::Vector3d::Zero(), 0.0));
+                                      Eigen::Vector3d::Zero(), manager.yawDurationLowerBound(0,0,0,0.5)));
 
   EXPECT_EQ(manager.local_data_.traj_id_, 1);
   EXPECT_GT(manager.local_data_.duration_, 0.0);
@@ -81,7 +81,7 @@ TEST(FastPlannerManagerTest, PlansPositionYawAndChecksCollision) {
 
   const std::vector<Eigen::Vector3d> yaw_waypoints{Eigen::Vector3d(0.25, 0.0, 0.0)};
   const std::vector<int> yaw_indices{6};
-  manager.planExplorationYawWaypointsTraj(0.0, 0.0, 0.5, yaw_waypoints, yaw_indices);
+  ASSERT_TRUE(manager.planExplorationYawWaypointsTraj(0.0, 0.0, 0.5, yaw_waypoints, yaw_indices));
   EXPECT_TRUE(std::isfinite(manager.local_data_.start_yaw_));
   EXPECT_TRUE(std::isfinite(manager.local_data_.end_yaw_));
 
@@ -196,6 +196,34 @@ TEST(FastPlannerManagerTest, LeavesSensorBlindSpotButRejectsUnobservedTravel) {
     grid->setOccupancy(address,voxel_mapping::OccupancyType::UNKNOWN);
   EXPECT_FALSE(manager.planExplorationPositionTraj(tour,Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero(),0.0));
   EXPECT_EQ(manager.local_data_.traj_id_,accepted_id);
+}
+
+TEST(FastPlannerManagerTest, BoundsYawAndPreservesMovingHandoffAcrossWrap) {
+  ensureRosInitialized();
+  auto node=std::make_shared<rclcpp::Node>("yaw_limits_test",plannerNodeOptions());
+  FastPlannerManager manager; manager.init(*node);
+  const double yaw=3.1, rate=-0.4, acceleration=0.2, goal=-3.1;
+  manager.local_data_.duration_=manager.yawDurationLowerBound(yaw,rate,acceleration,goal);
+  ASSERT_TRUE(std::isfinite(manager.local_data_.duration_));
+  // An incompatible soft waypoint must not override endpoint states or limits.
+  ASSERT_TRUE(manager.planExplorationYawWaypointsTraj(yaw,rate,goal,{{1000,0,0}},{6},acceleration));
+  auto &data=manager.local_data_;
+  const auto bounds=data.yaw_traj_.derivativeNormBounds();
+  EXPECT_LE(bounds[0],manager.pp_.max_yaw_vel_+1e-8);
+  EXPECT_LE(bounds[1],manager.pp_.max_yaw_acc_+1e-8);
+  EXPECT_NEAR(data.yaw_traj_.evaluateDeBoorT(0)[0],yaw,1e-9);
+  EXPECT_NEAR(data.yawdot_traj_.evaluateDeBoorT(0)[0],rate,1e-9);
+  EXPECT_NEAR(data.yawdotdot_traj_.evaluateDeBoorT(0)[0],acceleration,1e-9);
+  EXPECT_NEAR(data.end_yaw_,yaw+std::remainder(goal-yaw,2*M_PI),1e-9);
+  EXPECT_NEAR(data.yawdot_traj_.evaluateDeBoorT(data.duration_)[0],0,1e-9);
+  EXPECT_NEAR(data.yawdotdot_traj_.evaluateDeBoorT(data.duration_)[0],0,1e-9);
+  const auto accepted=data.yaw_traj_.getControlPoint();
+  manager.local_data_.duration_=0.02;
+  EXPECT_FALSE(manager.planExplorationYawWaypointsTraj(0,0,M_PI,{},{}));
+  EXPECT_TRUE(data.yaw_traj_.getControlPoint().isApprox(accepted));
+  EXPECT_FALSE(std::isfinite(manager.yawDurationLowerBound(0,2.0,0,1)));
+  EXPECT_FALSE(manager.planExplorationYawWaypointsTraj(0,0,1,{},{},2.0));
+  EXPECT_THROW(manager.planExplorationYawWaypointsTraj(0,0,1,{{0,0,0}},{13}),std::invalid_argument);
 }
 
 } // namespace
