@@ -178,11 +178,33 @@ Completed milestones:
   with no errors, failures, or skips. All migrated map/robot YAML files load via
   native ROS 2 parameter parsing, and the three-node launch smoke passes.
 
-The next target is the sensor/map-rendering simulator and end-to-end exploration
-validation on the six upstream environments. Upstream currently implements one
-hierarchical-grid level only; the ROS 2 port rejects other level counts. The
-exploration launch graph currently expects external sensor data; it does not yet
-include the unmigrated map renderers or SO3 simulator.
+- `falcon_map_render` provides a native CPU depth-rendering baseline: point-cloud
+  depth projection for PCD/PLY and BVH-accelerated ray/triangle intersection for
+  STL/OBJ. It reuses the original map assets without duplicating them in Git.
+- The renderer publishes calibrated float depth, camera intrinsics, and an optical
+  camera transform with matching odometry timestamps. Map scale and both map/world
+  and body/camera transforms are validated and applied explicitly.
+- The simulation launch now connects exploration, trajectory commands, simulated
+  odometry, depth rendering, map fusion, and frontier detection. Camera parameter
+  files are shared by the renderer and mapping node.
+- Sensor regressions exercise all six original maps, checking actual depth hits,
+  paired camera poses, and nonzero fused map volume. A bounded full-graph check
+  additionally verifies nonempty frontier output on `complex_office`.
+- `classical_office`'s integer-valued box bound was corrected to a double to match
+  native ROS 2 typed parameter declarations. Large-cloud rendering uses a Release
+  default build; tests isolate each map in its own process and ROS domain.
+- CUDA and Open3D development tools are absent in the current environment. The
+  original GPU renderers and RGB output are deferred; CPU rendering is not claimed
+  to be pixel-identical or performance-equivalent to the original GPU backends.
+- The rendering milestone reports 47 passing colcon checks across ten packages.
+  Six-map depth/fusion checks and the full simulation graph are additional live
+  integration checks, not extra cases counted in that aggregate.
+
+The next targets are bounded autonomous exploration runs, full-mission coverage
+and collision checks across the six environments, and later GPU acceleration.
+Upstream currently implements one hierarchical-grid level only; the ROS 2 port
+rejects other level counts. The new simulation graph uses command-to-odometry
+execution; the SO3 controller/dynamics simulator is still unmigrated.
 
 Validation commands:
 

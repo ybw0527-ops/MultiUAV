@@ -22,7 +22,7 @@
         # Size of the task bbox in meters
         # If not set, the whole map will be used
         box_min_x: -7.5
-        box_min_y: -15
+        box_min_y: -15.0
         box_min_z: 0.0
         box_max_x: 7.5
         box_max_y: 15.0

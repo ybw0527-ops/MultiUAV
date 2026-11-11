@@ -20,12 +20,14 @@ def generate_launch_description():
         ('falcon_exploration_manager', 'exploration_manager.yaml'),
     ]]
     params.append({'use_sim_time': LaunchConfiguration('use_sim_time')})
+    params.append(LaunchConfiguration('sensor_params_file'))
     params.append(LaunchConfiguration('map_params_file'))
     params.append({'transformer.sensor_pose_topic': LaunchConfiguration('sensor_pose_topic'),
                    'transformer.pose_topic_type': LaunchConfiguration('sensor_pose_type')})
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('odometry_topic', default_value='/uav_simulator/odometry'),
+        DeclareLaunchArgument('sensor_params_file', default_value=config('falcon_exploration_manager', 'robot/uav_model_simulator.yaml')),
         DeclareLaunchArgument('map_params_file', default_value=config('falcon_voxel_mapping', 'voxel_mapping.yaml')),
         DeclareLaunchArgument('sensor_pose_topic', default_value='/uav_simulator/sensor_pose'),
         DeclareLaunchArgument('sensor_pose_type', default_value='odometry'),

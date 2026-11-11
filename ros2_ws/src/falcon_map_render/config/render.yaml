@@ -1,0 +1,8 @@
+/**:
+  ros__parameters:
+    map_render:
+      render_rate: 10.0
+      world_frame: world
+      camera_frame: camera
+    pointcloud_render:
+      inflate_radius: 0.1
