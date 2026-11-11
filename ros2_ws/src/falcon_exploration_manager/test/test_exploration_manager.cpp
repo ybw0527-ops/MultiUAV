@@ -72,6 +72,7 @@ TEST(ExplorationManagerTest, FsmRequiresValidOdometryAndFrontiers) {
   fsm.init(*node);
   auto odom_pub = node->create_publisher<nav_msgs::msg::Odometry>("/odom_world", 10);
   auto trigger_pub = node->create_publisher<geometry_msgs::msg::PoseStamped>("/move_base_simple/goal", 10);
+  auto ready_pub=node->create_publisher<std_msgs::msg::Bool>("/planning/initialization_complete",rclcpp::QoS(1).transient_local());
   nav_msgs::msg::Odometry odom;
   odom.pose.pose.position.z = 1.0;
   odom.pose.pose.orientation.w = 0.0;
@@ -84,6 +85,14 @@ TEST(ExplorationManagerTest, FsmRequiresValidOdometryAndFrontiers) {
   }
   EXPECT_EQ(fsm.state(), fast_planner::INIT);
   odom.pose.pose.orientation.w = 1.0;
+  // Valid stationary odometry alone must not bypass unfinished initialization.
+  until=std::chrono::steady_clock::now()+std::chrono::milliseconds(2200);
+  while(std::chrono::steady_clock::now()<until) {
+    odom_pub->publish(odom); rclcpp::spin_some(node);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  EXPECT_EQ(fsm.state(),fast_planner::INIT);
+  std_msgs::msg::Bool ready; ready.data=true; ready_pub->publish(ready);
   until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
   while (std::chrono::steady_clock::now() < until && fsm.state() == fast_planner::INIT) {
     odom_pub->publish(odom);

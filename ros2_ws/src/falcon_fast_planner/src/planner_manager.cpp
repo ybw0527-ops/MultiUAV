@@ -103,6 +103,13 @@ void FastPlannerManager::init(rclcpp::Node &node) {
   readParameter(node, "uav_model.dynamics_parameters.max_linear_velocity", pp_.max_vel_, -1.0);
   readParameter(node, "uav_model.dynamics_parameters.max_linear_acceleration", pp_.max_acc_,
                 -1.0);
+  double velocity_scale,acceleration_scale;
+  readParameter(node,"fast_planner.velocity_scale",velocity_scale,1.0);
+  readParameter(node,"fast_planner.acceleration_scale",acceleration_scale,1.0);
+  if(!std::isfinite(velocity_scale) || !std::isfinite(acceleration_scale) ||
+      velocity_scale<=0 || velocity_scale>1 || acceleration_scale<=0 || acceleration_scale>1)
+    throw std::invalid_argument("Planner derivative scales must be in (0,1]");
+  pp_.max_vel_*=velocity_scale; pp_.max_acc_*=acceleration_scale;
   readParameter(node, "uav_model.dynamics_parameters.max_yaw_velocity", pp_.max_yaw_vel_, M_PI/2.0);
   readParameter(node, "uav_model.dynamics_parameters.max_yaw_acceleration", pp_.max_yaw_acc_, M_PI/2.0);
   readParameter(node, "fast_planner.control_points_distance", pp_.ctrl_pt_dist_, -1.0);

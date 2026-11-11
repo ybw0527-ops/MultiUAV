@@ -22,7 +22,8 @@ ros2 launch falcon_map_render simulation.launch.py map_name:=complex_office
 ```
 
 The simulation launch includes the exploration manager/map server, trajectory
-server, command-to-odometry simulator, and renderer. `map_name` selects one of
+server, a default command-to-odometry simulator (or `execution_model:=so3` for
+integrated rotor/rigid-body dynamics), and renderer. `map_name` selects one of
 `complex_office`, `classical_office`, `duplex_office`, `octa_maze`, `darpa_tunnel`,
 or `power_plant`. Assets are installed from the original repository resource
 directory; they are not duplicated in the new package's source tree.
@@ -118,9 +119,11 @@ the first exploration trajectory and exclude the initial positioning maneuver.
 
 Known volume is measured within the task box in cubic meters. The reported
 `known_task_box_fraction` divides it by box volume, including inaccessible solid
-space; it is not a percentage of reachable free space. These tests use ideal
-command-to-odometry execution and do not establish SO3/dynamics tracking, strict
-dynamic feasibility, or complete six-map mission coverage targets.
+space; it is not a percentage of reachable free space. The default tests use
+ideal command-to-odometry execution and do not establish tracked dynamic
+feasibility or complete six-map coverage. `--execution-model so3` separately
+measures integrated actual-state speed, acceleration, rotor RPM and tracking
+error, and checks actual recorded geometry clearance.
 The optimizer still uses soft costs. The planner now retimes cubic curves while
 preserving the input position, velocity, and acceleration, fixes the goal at rest,
 and checks derivative control-point norms. By the B-spline convex-hull property,
@@ -210,8 +213,22 @@ The translation-braking baseline is recorded in `test/braking_run_summary.json`:
 episodes and 1450 braking command samples. No position/yaw jumps, position/velocity
 inconsistencies or unsafe source-geometry samples were observed. The minimum
 geometry clearance lower bound was 0.348 m for the 0.2 m vehicle radius. Initial
-positioning is excluded from these exploration-phase brake checks and still uses
-the upstream initialization maneuver; stationary pre-trajectory acknowledgement
-does not certify braking that maneuver or physical SO3 actuator tracking.
+positioning was excluded from that historical exploration-phase baseline. Current
+initialization uses bounded, ROS-time minimum-jerk segments with intermediate
+abort/braking support and a readiness handshake before exploration. Three live
+SO3 startup tests cover nominal completion, clock pause, vertical stop and horizontal
+stop. A cancelled startup stays unready for automatic exploration.
+
+The new optional SO3 model is described in `falcon_so3_simulator/README.md`; its
+record is `falcon_so3_simulator/test/tracking_run_summary.json`. The default six-map
+60-second compatibility suite passed after the initialization change. One tracked
+60-second complex-office run also passed, with 31.5 m actual travel, 0.052 m maximum
+sampled tracking error and a 0.470 m geometry clearance lower bound. SO3 references
+reserve velocity/acceleration margins (1.7 m/s and 1.2 m/s² for the configured
+2 m/s and 2 m/s² observation gates). Actual state is checked independently;
+these finite-duration observations are not continuous actuator or hardware safety
+certificates. The recorded tracked run uses Cyclone DDS and the package's opt-in
+small-fragment transport profile so depth images reach the map server on this WSL
+host. The default middleware/profile is not changed globally.
 Shutdown is also checked. The harness signals the launch process once and lets
 it stop its nodes; a node crash during teardown fails the run.

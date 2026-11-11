@@ -1,0 +1,11 @@
+/**:
+  ros__parameters:
+    so3_simulator:
+      mass: 0.98
+      gravity: 9.81
+      motor_time_constant: 0.03333333333333333
+      max_rpm: 35000.0
+      integration_step: 0.001
+      odometry_rate: 100.0
+      rotation_gains: [1.5, 1.5, 1.0]
+      angular_gains: [0.13, 0.13, 0.1]

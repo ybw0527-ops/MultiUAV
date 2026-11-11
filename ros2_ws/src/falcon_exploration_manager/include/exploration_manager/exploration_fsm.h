@@ -19,6 +19,7 @@
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/int32.hpp>
 #include <std_msgs/msg/float32.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 using Eigen::Vector3d;
@@ -61,6 +62,8 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr trigger_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<falcon_interfaces::msg::PositionCommand>::SharedPtr command_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr initialization_sub_;
+  bool initialization_ready_{false};
   rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr replan_pub_;
   rclcpp::Publisher<falcon_interfaces::msg::Bspline>::SharedPtr bspline_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr uncertainty_pub_;

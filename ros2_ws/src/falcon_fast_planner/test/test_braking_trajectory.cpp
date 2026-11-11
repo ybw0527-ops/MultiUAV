@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "fast_planner/braking_trajectory.h"
+#include "fast_planner/initialization_trajectory.h"
 
 using namespace fast_planner;
 
@@ -48,4 +49,22 @@ TEST(BrakingGeometryTest, CapsuleDistanceIncludesInteriorsAndCornerMisses) {
     const double exact=segmentBoxSquaredDistance(a,b,low,high);
     EXPECT_LE(exact,numeric+1e-12); EXPECT_NEAR(exact,numeric,1e-6);
   }
+}
+
+TEST(InitializationTrajectoryTest, SmoothBoundedVerticalThenHorizontalMotion) {
+  InitializationTrajectory trajectory({2,3,0},{-0.6,0.8,1},2,2);
+  double max_velocity=0,max_acceleration=0;
+  auto previous=trajectory.sample(0);
+  EXPECT_EQ(previous.velocity.norm(),0); EXPECT_EQ(previous.acceleration.norm(),0);
+  for(double t=0.001;t<trajectory.duration();t+=0.001) {
+    const auto state=trajectory.sample(t);
+    max_velocity=std::max(max_velocity,state.velocity.norm());
+    max_acceleration=std::max(max_acceleration,state.acceleration.norm());
+    EXPECT_LE((state.velocity-previous.velocity).norm()/0.001,2+1e-5);
+    previous=state;
+  }
+  EXPECT_LE(max_velocity,2+1e-8); EXPECT_LE(max_acceleration,2+1e-8);
+  const auto end=trajectory.sample(trajectory.duration());
+  EXPECT_TRUE(end.position.isApprox(Eigen::Vector3d(1.4,3.8,1)));
+  EXPECT_EQ(end.velocity.norm(),0); EXPECT_EQ(end.acceleration.norm(),0);
 }

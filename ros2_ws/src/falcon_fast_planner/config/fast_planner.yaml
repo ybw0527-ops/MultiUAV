@@ -18,6 +18,8 @@
       init_yaw: 0.0
 
     fast_planner:
+      velocity_scale: 1.0
+      acceleration_scale: 1.0
       control_points_distance: 0.5
       collision_clearance: 0.2
       braking_reaction_time: 0.1

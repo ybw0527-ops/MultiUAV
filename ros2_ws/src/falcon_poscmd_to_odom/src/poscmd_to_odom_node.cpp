@@ -21,9 +21,10 @@ public:
   PoscmdToOdomNode()
   : Node("poscmd_to_odom"), command_received_(false)
   {
-    init_x_ = declare_parameter<double>("init_x", 0.0);
-    init_y_ = declare_parameter<double>("init_y", 0.0);
-    init_z_ = declare_parameter<double>("init_z", 0.0);
+    init_x_ = declare_parameter<double>("init_x", declare_parameter<double>("map_config.init_x",0.0));
+    init_y_ = declare_parameter<double>("init_y", declare_parameter<double>("map_config.init_y",0.0));
+    init_z_ = declare_parameter<double>("init_z", declare_parameter<double>("map_config.init_z",0.0));
+    initial_yaw_=declare_parameter<double>("map_config.init_yaw",0.0);
     frame_id_ = declare_parameter<std::string>("frame_id", "world");
     const double publish_rate_hz = declare_parameter<double>("publish_rate_hz", 100.0);
 
@@ -56,7 +57,8 @@ private:
       odometry.pose.pose.position.x = init_x_;
       odometry.pose.pose.position.y = init_y_;
       odometry.pose.pose.position.z = init_z_;
-      odometry.pose.pose.orientation.w = 1.0;
+      odometry.pose.pose.orientation.w = std::cos(0.5*initial_yaw_);
+      odometry.pose.pose.orientation.z = std::sin(0.5*initial_yaw_);
       odometry_publisher_->publish(odometry);
       return;
     }
@@ -90,6 +92,7 @@ private:
   double init_x_;
   double init_y_;
   double init_z_;
+  double initial_yaw_;
   std::string frame_id_;
   falcon_interfaces::msg::PositionCommand command_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odometry_publisher_;

@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>falcon_so3_simulator</name><version>0.1.0</version>
+  <description>Native ROS 2 SO3 controller and rotor-lag quadrotor dynamics.</description>
+  <maintainer email="noreply@example.com">FALCON ROS 2 maintainers</maintainer>
+  <license>LicenseRef-FALCON-Upstream</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>eigen</depend><depend>boost</depend><depend>rclcpp</depend>
+  <depend>falcon_interfaces</depend><depend>nav_msgs</depend><depend>sensor_msgs</depend>
+  <depend>std_msgs</depend><depend>geometry_msgs</depend>
+  <exec_depend>rmw_cyclonedds_cpp</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

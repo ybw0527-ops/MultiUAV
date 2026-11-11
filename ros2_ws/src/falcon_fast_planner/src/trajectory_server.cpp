@@ -26,6 +26,12 @@ TrajectoryServer::TrajectoryServer(const rclcpp::NodeOptions &options)
   world_frame_ = declare_parameter<std::string>("traj_server.world_frame", world_frame_);
   max_velocity_ = declare_parameter<double>("uav_model.dynamics_parameters.max_linear_velocity",2.0);
   max_acceleration_ = declare_parameter<double>("uav_model.dynamics_parameters.max_linear_acceleration",2.0);
+  const double velocity_scale=declare_parameter<double>("fast_planner.velocity_scale",1.0);
+  const double acceleration_scale=declare_parameter<double>("fast_planner.acceleration_scale",1.0);
+  if(!std::isfinite(velocity_scale) || !std::isfinite(acceleration_scale) ||
+      velocity_scale<=0 || velocity_scale>1 || acceleration_scale<=0 || acceleration_scale>1)
+    throw std::invalid_argument("Trajectory derivative scales must be in (0,1]");
+  max_velocity_*=velocity_scale; max_acceleration_*=acceleration_scale;
   max_yaw_velocity_ = declare_parameter<double>("uav_model.dynamics_parameters.max_yaw_velocity", M_PI/2.0);
   max_yaw_acceleration_ = declare_parameter<double>("uav_model.dynamics_parameters.max_yaw_acceleration", M_PI/2.0);
   if (!std::isfinite(max_velocity_) || !std::isfinite(max_acceleration_) ||
@@ -48,6 +54,7 @@ TrajectoryServer::TrajectoryServer(const rclcpp::NodeOptions &options)
   initial_rotation << std::cos(initial_yaw_), -std::sin(initial_yaw_), 0.0,
       std::sin(initial_yaw_), std::cos(initial_yaw_), 0.0, 0.0, 0.0, 1.0;
   initial_offset_ = initial_rotation * body_offset;
+  initialization_trajectory_=InitializationTrajectory(initial_position_,initial_offset_,max_velocity_,max_acceleration_);
 
   const auto kx = declare_parameter<std::vector<double>>("traj_server.kx", {5.7, 5.7, 6.2});
   const auto kv = declare_parameter<std::vector<double>>("traj_server.kv", {3.4, 3.4, 4.0});
@@ -74,6 +81,8 @@ TrajectoryServer::TrajectoryServer(const rclcpp::NodeOptions &options)
 
   position_command_pub_ = create_publisher<falcon_interfaces::msg::PositionCommand>(
       "planning/pos_cmd", rclcpp::QoS(50));
+  initialization_pub_=create_publisher<std_msgs::msg::Bool>(
+      "planning/initialization_complete",rclcpp::QoS(1).transient_local());
   fov_pub_ = create_publisher<visualization_msgs::msg::Marker>(
       "planning/position_cmd_vis", rclcpp::QoS(10));
   trajectory_pub_ = create_publisher<visualization_msgs::msg::Marker>(
@@ -91,6 +100,7 @@ TrajectoryServer::TrajectoryServer(const rclcpp::NodeOptions &options)
     command_template_.position.z += initial_offset_.z();
     initialization_complete_ = true;
   }
+  std_msgs::msg::Bool ready; ready.data=initialization_complete_; initialization_pub_->publish(ready);
 
   using namespace std::chrono_literals;
   command_timer_ = create_wall_timer(10ms, std::bind(&TrajectoryServer::commandTimerCallback, this));
@@ -174,6 +184,8 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
       throw std::invalid_argument("Position spline must end at rest with zero acceleration");
 
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if(!initialization_complete_)
+      throw std::invalid_argument("Initialization must finish or stop before accepting a trajectory");
     if (message.traj_id <= trajectory_id_)
       throw std::invalid_argument("Trajectory IDs must be strictly increasing");
     if (received_trajectory_) {
@@ -309,7 +321,15 @@ void TrajectoryServer::bsplineCallback(
 void TrajectoryServer::replanCallback(const std_msgs::msg::Int32::SharedPtr message) {
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
   if (!received_trajectory_) {
-    if(message->data>=0 && message->data<=2) stopped_without_trajectory_=true;
+    if(message->data>=0 && message->data<=2) {
+      stopped_without_trajectory_=true;
+      if(!initialization_complete_ && !initialization_stopping_) {
+        const double elapsed=initialization_started_ ? std::max(0.0,(now()-initialization_start_).seconds()) : 0;
+        const auto state=initialization_trajectory_.sample(elapsed);
+        initialization_brake_=BrakingTrajectory(state.position,state.velocity,max_acceleration_);
+        initialization_stop_=now(); initialization_stopping_=true;
+      }
+    }
     return;
   }
   const double elapsed = std::max(0.0, (now() - start_time_).seconds());
@@ -377,25 +397,31 @@ void TrajectoryServer::commandTimerCallback() {
 void TrajectoryServer::visualizationTimerCallback() { publishExecutedTrajectory(); }
 
 void TrajectoryServer::runInitializationStep() {
-  constexpr int kVerticalSteps = 100;
-  constexpr int kHorizontalSteps = 100;
-  if (initialization_step_ < kVerticalSteps) {
-    command_template_.position.z += initial_offset_.z() / kVerticalSteps;
-  } else if (initialization_step_ < kVerticalSteps + kHorizontalSteps) {
-    command_template_.position.x += initial_offset_.x() / kHorizontalSteps;
-    command_template_.position.y += initial_offset_.y() / kHorizontalSteps;
-  } else {
-    initialization_complete_ = true;
-    RCLCPP_INFO(get_logger(), "Initial positioning completed");
-    return;
+  std::lock_guard<std::mutex> lock(trajectory_mutex_);
+  const auto time=now();
+  if(get_parameter("use_sim_time").as_bool() && time.nanoseconds()==0) return;
+  if(!initialization_started_) { initialization_start_=time; initialization_started_=true; }
+  const double elapsed=std::max(0.0,(time-(initialization_stopping_ ? initialization_stop_ : initialization_start_)).seconds());
+  const auto state=initialization_stopping_ ? initialization_brake_.sample(elapsed) : initialization_trajectory_.sample(elapsed);
+  const bool finished=elapsed>=(initialization_stopping_ ? initialization_brake_.duration() : initialization_trajectory_.duration());
+  auto command=command_template_;
+  command.header.stamp=time;
+  command.position.x=state.position.x(); command.position.y=state.position.y(); command.position.z=state.position.z();
+  command.velocity.x=state.velocity.x(); command.velocity.y=state.velocity.y(); command.velocity.z=state.velocity.z();
+  command.acceleration.x=state.acceleration.x(); command.acceleration.y=state.acceleration.y(); command.acceleration.z=state.acceleration.z();
+  command.jerk.x=state.jerk.x(); command.jerk.y=state.jerk.y(); command.jerk.z=state.jerk.z();
+  command.trajectory_flag=initialization_stopping_ ?
+      (finished ? falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED : falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_ABORT) :
+      (finished ? falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_READY : falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_EMPTY);
+  last_command_=command; has_last_command_=true;
+  if(finished) {
+    command_template_=command;
+    initialization_complete_=true;
+    std_msgs::msg::Bool ready; ready.data=!initialization_stopping_; initialization_pub_->publish(ready);
+    RCLCPP_INFO(get_logger(),"Initial positioning %s",initialization_stopping_ ? "stopped" : "completed");
   }
-  ++initialization_step_;
-  command_template_.header.stamp = now();
-  position_command_pub_->publish(command_template_);
-  publishFieldOfView(
-      Eigen::Vector3d(command_template_.position.x, command_template_.position.y,
-                      command_template_.position.z),
-      command_template_.yaw);
+  position_command_pub_->publish(command);
+  publishFieldOfView(state.position,command.yaw);
 }
 
 void TrajectoryServer::publishFieldOfView(const Eigen::Vector3d &position, const double yaw) {

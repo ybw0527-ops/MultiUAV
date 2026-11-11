@@ -230,8 +230,8 @@ The autonomous regression stage adds:
   instead of repeatedly retrying that goal. The harness rejects a run that stops
   moving for its final 15 seconds while the FSM is still exploring.
 
-The next targets are full-mission coverage targets across all six environments,
-tracking with the SO3/dynamics simulator, and later GPU acceleration.
+The next targets are full-mission coverage and tracked dynamics across all six
+environments, actuator-bound calibration, and later GPU acceleration.
 
 The linear-motion validation stage adds continuous Euclidean derivative bounds
 for B-splines, cubic retiming with exact initial position/velocity/acceleration and
@@ -313,6 +313,45 @@ reproduction details and remaining physical-model limitations.
 Three native test suites also passed 20 repetitions each: 60 braking-core,
 140 planner and 180 trajectory-server case executions (380 total).
 
+### Smooth initialization and native SO3 execution
+
+Initialization now uses ROS-time minimum-jerk vertical/horizontal segments with
+consistent position/velocity/acceleration/jerk commands and stationary endpoints.
+Both phases support the same bounded translational stop model. A paused clock
+does not advance initialization, and zero simulated time is held until the first
+clock arrives. `/planning/initialization_complete` is a transient-local readiness
+signal. The FSM requires readiness and settled odometry before leaving INIT;
+aborting initialization stops and holds without automatically rearming exploration.
+The kinematic adapter also starts at the configured map pose instead of jumping
+from an unrelated origin when the first initialization command arrives.
+
+`falcon_so3_simulator` provides the native controller/rigid-body/rotor-lag model,
+selectable with `execution_model:=so3` in the complete simulation launch. The
+default remains the kinematic adapter. The port initializes external moment and
+acceleration, removes unused uninitialized flow calculations, fixes the Cholesky
+rotation projection, and fails explicitly on nonfinite state or unsupported clock
+jumps. It preserves upstream PD/feedforward and motor allocation while removing
+the inconsistent adaptive acceleration-error branch and enforcing a 45-degree
+desired-tilt bound. The controller uses the plant's actual mass.
+
+An unscaled initialization reached 2.50 m/s² measured actual acceleration despite
+a 2 m/s² command bound. The SO3 preset therefore reserves reference margins:
+0.85 velocity and 0.60 acceleration scales (1.7 m/s and 1.2 m/s² references at
+the configured physical observation gates of 2 m/s and 2 m/s²). These settings
+are model-specific, not continuous actuator guarantees.
+
+Recorded validation: 72 passing workspace checks; all six 60-second kinematic
+compatibility runs; three SO3 initialization/clock-pause/abort scenarios; and one
+60-second SO3 complex-office exploration run. That tracked run traveled 31.5 m,
+observed 1.54 m/s peak speed and 1.55 m/s² finite-difference acceleration, and had
+0.052 m maximum sampled tracking error. Its original mesh clearance lower bound
+was 0.470 m for a 0.2 m vehicle radius, with no unsafe samples. The three startup
+scenarios observed at most 1.84 m/s² actual finite-difference acceleration.
+See `ros2_ws/src/falcon_so3_simulator/test/tracking_run_summary.json` and the
+package README for reproducible middleware settings and full limits. These runs
+do not establish hardware flight safety, complete tracked six-map missions,
+jerk/thrust/angular actuator bounds, or calibrated disturbances and ground contact.
+
 Candidate and live-trajectory collision checks now require known free center
 voxels and account for the vehicle sphere against occupied voxel AABBs, including
 a speed-dependent margin between samples. The default collision radius is 0.2 m.
@@ -346,7 +385,9 @@ bound was 0.284 m; the test radius was 0.2 m. Acceleration spikes remain visible
 in the recorded metrics and are not accepted as dynamically feasible flight.
 Upstream currently implements one hierarchical-grid level only; the ROS 2 port
 rejects other level counts. The new simulation graph uses command-to-odometry
-execution; the SO3 controller/dynamics simulator is still unmigrated.
+execution; at that earlier milestone the SO3 controller/dynamics simulator was
+still unmigrated. The optional native SO3 model below replaces that execution
+assumption for the recorded tracked tests.
 
 Validation commands:
 

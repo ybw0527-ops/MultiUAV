@@ -10,12 +10,14 @@
 #include <Eigen/Eigen>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/int32.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 #include "falcon_interfaces/msg/bspline.hpp"
 #include "falcon_interfaces/msg/position_command.hpp"
 #include "bspline/non_uniform_bspline.h"
 #include "fast_planner/braking_trajectory.h"
+#include "fast_planner/initialization_trajectory.h"
 #include "perception_utils/perception_utils.h"
 
 namespace fast_planner {
@@ -71,7 +73,10 @@ private:
   Eigen::Vector3d initial_offset_{Eigen::Vector3d::Zero()};
   double initial_yaw_{0.0};
   bool perform_initial_motion_{true};
-  int initialization_step_{0};
+  InitializationTrajectory initialization_trajectory_;
+  BrakingTrajectory initialization_brake_;
+  bool initialization_started_{false}, initialization_stopping_{false};
+  rclcpp::Time initialization_start_{0,0,RCL_ROS_TIME}, initialization_stop_{0,0,RCL_ROS_TIME};
   bool initialization_complete_{false};
 
   std::vector<Eigen::Vector3d> commanded_positions_;
@@ -85,6 +90,7 @@ private:
   rclcpp::Subscription<falcon_interfaces::msg::Bspline>::SharedPtr bspline_sub_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr replan_sub_;
   rclcpp::Publisher<falcon_interfaces::msg::PositionCommand>::SharedPtr position_command_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr initialization_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr fov_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr trajectory_pub_;
   rclcpp::TimerBase::SharedPtr command_timer_;

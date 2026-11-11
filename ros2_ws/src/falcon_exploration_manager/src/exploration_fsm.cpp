@@ -58,6 +58,8 @@ void ExplorationFSM::init(rclcpp::Node &node) {
   frontier_timer_ = node.create_wall_timer(std::chrono::milliseconds(500), [this]{ frontierCallback(); });
   trigger_sub_ = node.create_subscription<geometry_msgs::msg::PoseStamped>("/move_base_simple/goal", 1, [this](geometry_msgs::msg::PoseStamped::ConstSharedPtr msg){ triggerCallback(msg); });
   odom_sub_ = node.create_subscription<nav_msgs::msg::Odometry>("/odom_world", rclcpp::SensorDataQoS(), [this](nav_msgs::msg::Odometry::ConstSharedPtr msg){ odometryCallback(msg); });
+  initialization_sub_=node.create_subscription<std_msgs::msg::Bool>("/planning/initialization_complete",
+      rclcpp::QoS(1).transient_local(),[this](std_msgs::msg::Bool::ConstSharedPtr msg){ initialization_ready_=msg->data; });
   command_sub_ = node.create_subscription<falcon_interfaces::msg::PositionCommand>(
       "/planning/pos_cmd",10,[this](falcon_interfaces::msg::PositionCommand::ConstSharedPtr msg) {
         if(msg->trajectory_flag==falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED &&
@@ -105,6 +107,7 @@ void ExplorationFSM::FSMCallback() {
       RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000, "[FSM] Initializing");
       return;
     }
+    if(!initialization_ready_ || fd_->odom_vel_.norm()>0.05 || fd_->odom_angular_speed_>0.05) return;
     // Go to wait trigger when odom is ok
     RCLCPP_WARN(node_->get_logger(), "[FSM] Receive odom from topic %s", odom_sub_->get_topic_name());
     RCLCPP_WARN_STREAM(node_->get_logger(),  "[FSM] Receive odom from topic " << odom_sub_->get_topic_name());

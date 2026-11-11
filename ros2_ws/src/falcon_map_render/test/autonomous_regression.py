@@ -15,7 +15,8 @@ from ament_index_python.packages import get_package_prefix, get_package_share_di
 from rclpy.qos import qos_profile_sensor_data
 from falcon_interfaces.msg import Bspline, PositionCommand
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, Image
+from geometry_msgs.msg import TransformStamped
 from rosgraph_msgs.msg import Clock
 from std_msgs.msg import Float32
 
@@ -26,6 +27,7 @@ def main():
     parser.add_argument('--map', choices=maps + ['all'], default='complex_office')
     parser.add_argument('--duration', type=float, default=60)
     parser.add_argument('--output', default='/tmp/falcon_autonomous')
+    parser.add_argument('--execution-model',choices=['kinematic','so3'],default='kinematic')
     args = parser.parse_args()
     if not math.isfinite(args.duration) or args.duration < 10:
         parser.error('--duration must be finite and at least 10 seconds')
@@ -33,7 +35,8 @@ def main():
         summary = []
         for index, name in enumerate(maps):
             child = subprocess.run([sys.executable, __file__, '--map', name,
-                                    '--duration', str(args.duration), '--output', args.output],
+                                    '--duration', str(args.duration), '--output', args.output,
+                                    '--execution-model',args.execution_model],
                                    env={**os.environ, 'ROS_DOMAIN_ID': str(190 + index)}, check=False)
             report = Path(args.output) / (name + '.json')
             metrics = json.loads(report.read_text()) if report.exists() else {}
@@ -52,6 +55,16 @@ def main():
                   coverage_start=None, coverage_final=0.0, distance=0.0,
                   command_jumps=0, max_command_step=0.0, max_speed=0.0, max_acceleration=0.0)
     result['requested_duration_sec'] = args.duration
+    result['execution_model']=args.execution_model
+    result['max_actual_speed']=0.0
+    result['max_actual_acceleration']=0.0
+    result['max_tracking_error']=0.0
+    result['motor_rpm_samples']=0
+    result['max_motor_rpm']=0.0
+    result['min_motor_rpm']=math.inf
+    result['depth_frames']=0
+    result['sensor_pose_frames']=0
+    result['positive_depth_pixels']=0
     result['max_spline_speed_bound'] = 0.0
     result['max_spline_acceleration_bound'] = 0.0
     result['max_spline_yaw_rate_bound'] = 0.0
@@ -68,6 +81,8 @@ def main():
     samples = []
     previous = None
     previous_command = None
+    previous_velocity = None
+    previous_odom_stamp = None
 
     def trajectory(msg):
         result['trajectories'] += 1
@@ -133,10 +148,22 @@ def main():
             result['max_yaw_rate'] = max(result['max_yaw_rate'], abs(msg.yaw_dot))
 
     def odom(msg):
-        nonlocal previous
+        nonlocal previous, previous_velocity, previous_odom_stamp
         p = msg.pose.pose.position
         point = (p.x, p.y, p.z)
+        result['last_actual_position']=point
+        if not all(math.isfinite(x) for x in (*point,msg.twist.twist.linear.x,msg.twist.twist.linear.y,msg.twist.twist.linear.z)):
+            result['invalid_commands']+=1
+            return
         if result['trajectories']:
+            velocity=(msg.twist.twist.linear.x,msg.twist.twist.linear.y,msg.twist.twist.linear.z)
+            stamp=msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
+            result['max_actual_speed']=max(result['max_actual_speed'],math.hypot(*velocity))
+            if previous_velocity is not None and 1e-3<stamp-previous_odom_stamp<0.2:
+                result['max_actual_acceleration']=max(result['max_actual_acceleration'],math.dist(velocity,previous_velocity)/(stamp-previous_odom_stamp))
+            if previous_command is not None and abs(stamp-previous_command[0])<0.05:
+                result['max_tracking_error']=max(result['max_tracking_error'],math.dist(point,previous_command[1]))
+            previous_velocity,previous_odom_stamp=velocity,stamp
             if previous is not None:
                 step = math.dist(point, previous)
                 result['distance'] += step
@@ -145,12 +172,31 @@ def main():
             samples.append([time.monotonic() - start, *point])
             previous = point
 
+    def motors(msg):
+        if len(msg.data)!=4 or not all(math.isfinite(x) and 0<=x<=35000+1e-6 for x in msg.data):
+            result['invalid_commands']+=1
+            return
+        result['motor_rpm_samples']+=1
+        result['max_motor_rpm']=max(result['max_motor_rpm'],max(msg.data))
+        result['min_motor_rpm']=min(result['min_motor_rpm'],min(msg.data))
+
     subscriptions = [
         node.create_subscription(Bspline, '/planning/bspline', trajectory, 10),
         node.create_subscription(PositionCommand, '/planning/pos_cmd', command, 10),
         node.create_subscription(Odometry, '/uav_simulator/odometry', odom, qos_profile_sensor_data),
         node.create_subscription(Float32, '/voxel_mapping/map_coverage', coverage, 10),
     ]
+    if args.execution_model=='so3':
+        from std_msgs.msg import Float64MultiArray
+        subscriptions.append(node.create_subscription(Float64MultiArray,'/uav_simulator/motor_rpm',motors,10))
+        def depth_frame(msg):
+            import array
+            pixels=array.array('f'); pixels.frombytes(bytes(msg.data))
+            result['depth_frames']+=1
+            result['positive_depth_pixels']=sum(math.isfinite(x) and x>0 for x in pixels)
+        subscriptions.append(node.create_subscription(Image,'/uav_simulator/depth_image',depth_frame,qos_profile_sensor_data))
+        subscriptions.append(node.create_subscription(TransformStamped,'/uav_simulator/sensor_pose',
+            lambda msg:result.__setitem__('sensor_pose_frames',result['sensor_pose_frames']+1),10))
     for category, topic in [('active','frontier'), ('dormant','dormant_frontier'), ('tiny','tiny_frontier')]:
         subscriptions.append(node.create_subscription(PointCloud2, '/planning_vis/' + topic + '_pcl',
             lambda msg, name=category: result['frontier_points'].__setitem__(name, msg.width * msg.height), 10))
@@ -172,6 +218,7 @@ def main():
             'ros2', 'launch', 'falcon_map_render', 'simulation.launch.py',
             'map_name:=' + args.map,
             'use_sim_time:=true',
+            'execution_model:='+args.execution_model,
             'sensor_params_file:=' + str(sensor_config.resolve()),
         ], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
@@ -208,6 +255,7 @@ def main():
             if rclpy.ok():
                 rclpy.shutdown()
             result['samples'] = samples
+            if not math.isfinite(result['min_motor_rpm']): result['min_motor_rpm']=None
             (output / (args.map + '.json')).write_text(json.dumps(result, indent=2))
     teardown_log = log_path.read_text()
     if (result['shutdown_forced'] or teardown_log.count('process has finished cleanly') != 4 or
@@ -231,6 +279,11 @@ def main():
     assert result['distance'] > 1.0, 'No executed exploration motion'
     assert result['fsm_finished'] or args.duration - result.get('last_motion_sec', 0) < 15.0, 'Exploration stalled before timeout'
     assert result['coverage_final'] > result['coverage_start'] + 1.0, 'No coverage growth after planning'
+    if args.execution_model=='so3':
+        assert result['motor_rpm_samples']>100, 'No integrated rotor dynamics'
+        assert result['max_tracking_error']<0.3, 'Excessive SO3 tracking error'
+        assert result['max_actual_speed']<=2+1e-3, 'Actual SO3 speed exceeds physical limit'
+        assert result['max_actual_acceleration']<=2+1e-3, 'Actual SO3 acceleration exceeds physical limit'
     config = yaml.safe_load((Path(get_package_share_directory('falcon_exploration_manager')) /
                              'config' / 'map' / (args.map + '.yaml')).read_text())['/**']['ros__parameters']['map_config']
     bounds = config['map_size']
