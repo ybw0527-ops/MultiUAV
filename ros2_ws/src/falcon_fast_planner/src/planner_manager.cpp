@@ -140,6 +140,12 @@ void FastPlannerManager::init(rclcpp::Node &node) {
 
   path_finder_ = std::make_shared<Astar>();
   path_finder_->init(node, map_server_);
+  // Search for executable body-clear paths before fitting a spline. A ray
+  // through free voxel centers can graze an occupied cell and fail forever at
+  // the stricter swept-volume certification stage.
+  path_finder_->setSegmentValidator([this](const Eigen::Vector3d &a,const Eigen::Vector3d &b) {
+    return isBrakingSegmentSafe(a,b,a,0.05,false);
+  });
 
   // 2 Bspline optimizers for position and yaw
   bspline_optimizers_.resize(2);

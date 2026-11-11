@@ -14,7 +14,7 @@ import yaml
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from rclpy.qos import qos_profile_sensor_data
 from falcon_interfaces.msg import Bspline, PositionCommand
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path as StatePath
 from sensor_msgs.msg import PointCloud2, Image
 from geometry_msgs.msg import TransformStamped
 from rosgraph_msgs.msg import Clock
@@ -65,6 +65,14 @@ def main():
     result['depth_frames']=0
     result['sensor_pose_frames']=0
     result['positive_depth_pixels']=0
+    result['integration_status_samples']=0
+    result['max_clock_interval_sec']=0.0
+    result['clock_catchup_events']=0
+    result['max_command_lateness_sec']=0.0
+    result['max_integrated_speed']=0.0
+    result['max_integrated_acceleration']=0.0
+    result['state_trace_samples']=0
+    result['max_state_trace_gap_sec']=0.0
     result['max_spline_speed_bound'] = 0.0
     result['max_spline_acceleration_bound'] = 0.0
     result['max_spline_yaw_rate_bound'] = 0.0
@@ -83,9 +91,15 @@ def main():
     previous_command = None
     previous_velocity = None
     previous_odom_stamp = None
+    first_trajectory_stamp = None
+    previous_trace_stamp = None
+    previous_trace_point = None
 
     def trajectory(msg):
+        nonlocal first_trajectory_stamp
         result['trajectories'] += 1
+        if first_trajectory_stamp is None:
+            first_trajectory_stamp=msg.start_time.sec+msg.start_time.nanosec*1e-9
         for yaw in (False, True):
             points = [(p,) for p in msg.yaw_pts] if yaw else [(p.x, p.y, p.z) for p in msg.pos_pts]
             knots = [msg.yaw_dt * (i-3) for i in range(len(points)+4)] if yaw else list(msg.knots)
@@ -162,15 +176,45 @@ def main():
             if previous_velocity is not None and 1e-3<stamp-previous_odom_stamp<0.2:
                 result['max_actual_acceleration']=max(result['max_actual_acceleration'],math.dist(velocity,previous_velocity)/(stamp-previous_odom_stamp))
             if previous_command is not None and abs(stamp-previous_command[0])<0.05:
-                result['max_tracking_error']=max(result['max_tracking_error'],math.dist(point,previous_command[1]))
+                error=math.dist(point,previous_command[1])
+                if error>result['max_tracking_error']:
+                    result['max_tracking_error']=error
+                    result['worst_tracking_sample']=dict(odometry_stamp=stamp,command_stamp=previous_command[0],
+                                                       actual_position=point,reference_position=previous_command[1])
             previous_velocity,previous_odom_stamp=velocity,stamp
-            if previous is not None:
+            if previous is not None and args.execution_model=='kinematic':
                 step = math.dist(point, previous)
                 result['distance'] += step
                 if step > 1e-4:
                     result['last_motion_sec'] = time.monotonic() - start
-            samples.append([time.monotonic() - start, *point])
+            if args.execution_model=='kinematic': samples.append([time.monotonic() - start, *point])
             previous = point
+
+    def integration_status(msg):
+        if len(msg.data)!=5 or not all(math.isfinite(x) and x>=0 for x in msg.data):
+            result['invalid_commands']+=1
+            return
+        result['integration_status_samples']+=1
+        for key,value in zip(('max_clock_interval_sec','clock_catchup_events','max_command_lateness_sec',
+                              'max_integrated_speed','max_integrated_acceleration'),msg.data):
+            result[key]=max(result[key],value)
+
+    def state_trace(msg):
+        nonlocal previous_trace_stamp,previous_trace_point
+        if first_trajectory_stamp is None: return
+        for pose in msg.poses:
+            stamp=pose.header.stamp.sec+pose.header.stamp.nanosec*1e-9
+            if stamp<first_trajectory_stamp or (previous_trace_stamp is not None and stamp<=previous_trace_stamp): continue
+            p=pose.pose.position; point=(p.x,p.y,p.z)
+            if not all(math.isfinite(x) for x in (*point,stamp)):
+                result['invalid_commands']+=1
+                continue
+            if previous_trace_stamp is not None:
+                result['max_state_trace_gap_sec']=max(result['max_state_trace_gap_sec'],stamp-previous_trace_stamp)
+                step=math.dist(point,previous_trace_point); result['distance']+=step
+                if step>1e-4: result['last_motion_sec']=stamp-1.0
+            samples.append([stamp-1.0,*point]); result['state_trace_samples']+=1
+            previous_trace_stamp,previous_trace_point=stamp,point
 
     def motors(msg):
         if len(msg.data)!=4 or not all(math.isfinite(x) and 0<=x<=35000+1e-6 for x in msg.data):
@@ -189,6 +233,8 @@ def main():
     if args.execution_model=='so3':
         from std_msgs.msg import Float64MultiArray
         subscriptions.append(node.create_subscription(Float64MultiArray,'/uav_simulator/motor_rpm',motors,10))
+        subscriptions.append(node.create_subscription(Float64MultiArray,'/uav_simulator/integration_status',integration_status,10))
+        subscriptions.append(node.create_subscription(StatePath,'/uav_simulator/state_trace',state_trace,100))
         def depth_frame(msg):
             import array
             pixels=array.array('f'); pixels.frombytes(bytes(msg.data))
@@ -281,9 +327,13 @@ def main():
     assert result['coverage_final'] > result['coverage_start'] + 1.0, 'No coverage growth after planning'
     if args.execution_model=='so3':
         assert result['motor_rpm_samples']>100, 'No integrated rotor dynamics'
+        assert result['integration_status_samples']>100 and result['state_trace_samples']>100, 'Missing integrated state audit'
+        assert result['max_state_trace_gap_sec']<=0.02+1e-6, 'Missing actual integration path history'
         assert result['max_tracking_error']<0.3, 'Excessive SO3 tracking error'
         assert result['max_actual_speed']<=2+1e-3, 'Actual SO3 speed exceeds physical limit'
         assert result['max_actual_acceleration']<=2+1e-3, 'Actual SO3 acceleration exceeds physical limit'
+        assert result['max_integrated_speed']<=2+1e-3, 'Substep SO3 speed exceeds physical limit'
+        assert result['max_integrated_acceleration']<=2+1e-3, 'Substep SO3 acceleration exceeds physical limit'
     config = yaml.safe_load((Path(get_package_share_directory('falcon_exploration_manager')) /
                              'config' / 'map' / (args.map + '.yaml')).read_text())['/**']['ros__parameters']['map_config']
     bounds = config['map_size']

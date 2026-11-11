@@ -12,7 +12,7 @@ os.environ['ROS_LOCALHOST_ONLY']='1'
 import rclpy
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from falcon_interfaces.msg import PositionCommand
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path as StatePath
 from rosgraph_msgs.msg import Clock
 from std_msgs.msg import Bool, Int32, Float64MultiArray
 
@@ -21,9 +21,14 @@ def main():
     parser.add_argument('--stop',choices=['none','vertical','horizontal'],default='none')
     parser.add_argument('--output',default='/tmp/falcon_initialization_tracking')
     parser.add_argument('--duration',type=float,default=9.0)
+    parser.add_argument('--delay-model-clock',action='store_true',help='Withhold only model clock updates for 0.65 s')
+    parser.add_argument('--delay-global-clock',action='store_true',help='Withhold all clock updates for 0.65 s, then catch up')
     args=parser.parse_args()
+    if args.delay_model_clock and args.delay_global_clock:
+        parser.error('Select one delayed-clock mode')
     rclpy.init(); node=rclpy.create_node('initialization_tracking_regression')
     clock_pub=node.create_publisher(Clock,'/clock',10)
+    model_clock_pub=node.create_publisher(Clock,'/model_clock',10)
     stop_pub=node.create_publisher(Int32,'/planning/replan',10)
     result=dict(scenario=args.stop,commands=0,odometry_samples=0,invalid=0,ready=False,
                 max_command_speed=0.0,max_command_acceleration=0.0,max_command_fd_acceleration=0.0,
@@ -32,9 +37,15 @@ def main():
                 clock_pause_samples=0,clock_pause_position_drift=0.0,forced_shutdown=False)
     result['ros_domain_id']=os.environ['ROS_DOMAIN_ID']
     result['rmw_implementation']=os.environ.get('RMW_IMPLEMENTATION','default')
+    result.update(model_clock_delay_requested=args.delay_model_clock,max_model_clock_interval=0.0,
+                  max_integrated_speed=0.0,max_integrated_acceleration=0.0,
+                  trace_samples=0,max_trace_gap=0.0)
+    result['global_clock_delay_requested']=args.delay_global_clock
     last_command=None; previous=None; actual=None; previous_actual=None; pause_anchor=None
     pause_time=None; pause_started=None; paused_duration=0.0; stop_reference=None
     motion_start=None
+    model_clock_delay_start=None; previous_trace_stamp=None
+    global_clock_delay_start=None
     def command(msg):
         nonlocal last_command, previous, pause_anchor, motion_start
         if motion_start is None: motion_start=time.monotonic()
@@ -71,15 +82,30 @@ def main():
         if len(msg.data)!=4 or not all(math.isfinite(x) and 0<=x<=35000 for x in msg.data): result['invalid']+=1
         result['motor_samples']+=1
         result['max_motor_rpm']=max(result['max_motor_rpm'],max(msg.data))
+    def status(msg):
+        if len(msg.data)!=5: result['invalid']+=1; return
+        result['max_model_clock_interval']=max(result['max_model_clock_interval'],msg.data[0])
+        result['max_integrated_speed']=max(result['max_integrated_speed'],msg.data[3])
+        result['max_integrated_acceleration']=max(result['max_integrated_acceleration'],msg.data[4])
+    def trace(msg):
+        nonlocal previous_trace_stamp
+        for pose in msg.poses:
+            stamp=pose.header.stamp.sec+pose.header.stamp.nanosec*1e-9
+            if previous_trace_stamp is not None:
+                result['max_trace_gap']=max(result['max_trace_gap'],stamp-previous_trace_stamp)
+            previous_trace_stamp=stamp; result['trace_samples']+=1
     subs=[node.create_subscription(PositionCommand,'/planning/pos_cmd',command,20),
           node.create_subscription(Odometry,'/uav_simulator/odometry',odom,qos_profile_sensor_data),
           node.create_subscription(Float64MultiArray,'/uav_simulator/motor_rpm',motors,20),
+          node.create_subscription(Float64MultiArray,'/uav_simulator/integration_status',status,20),
+          node.create_subscription(StatePath,'/uav_simulator/state_trace',trace,100),
           node.create_subscription(Bool,'/planning/initialization_complete',lambda m:result.__setitem__('ready',m.data),
                                    QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL))]
     output=Path(args.output); output.mkdir(parents=True,exist_ok=True)
     path=output/(args.stop+'.log'); start=time.monotonic(); process=None
     with path.open('w') as log:
-        process=subprocess.Popen(['ros2','launch',str(Path(__file__).with_name('initialization_tracking.launch.py'))],
+        launch_args=['model_clock_topic:=/model_clock'] if args.delay_model_clock else []
+        process=subprocess.Popen(['ros2','launch',str(Path(__file__).with_name('initialization_tracking.launch.py')),*launch_args],
             stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
         try:
             heartbeat=start+5
@@ -93,7 +119,15 @@ def main():
                 else:
                     paused_duration=0.25 if pause_started is not None else 0.0
                     seconds=1.0 if motion_start is None else wall-motion_start+1.0-paused_duration
-                msg=Clock(); msg.clock.sec,msg.clock.nanosec=divmod(round(seconds*1e9),10**9); clock_pub.publish(msg)
+                msg=Clock(); msg.clock.sec,msg.clock.nanosec=divmod(round(seconds*1e9),10**9)
+                if args.delay_global_clock and global_clock_delay_start is None and last_command and last_command[2][0]>0.3:
+                    global_clock_delay_start=wall
+                global_clock_available=global_clock_delay_start is None or wall-global_clock_delay_start>=0.65
+                if global_clock_available: clock_pub.publish(msg)
+                if args.delay_model_clock and model_clock_delay_start is None and last_command and last_command[2][0]>0.3:
+                    model_clock_delay_start=wall
+                if global_clock_available and (model_clock_delay_start is None or wall-model_clock_delay_start>=0.65):
+                    model_clock_pub.publish(msg)
                 rclpy.spin_once(node,timeout_sec=0.002)
                 if wall>=heartbeat:
                     print(json.dumps(dict(nodes=node.get_node_names(),clock_subscribers=clock_pub.get_subscription_count(),
@@ -130,6 +164,12 @@ def main():
     assert result['max_command_speed']<=2+1e-5 and result['max_command_acceleration']<=2+1e-5
     assert result['max_command_fd_acceleration']<=2+1e-3
     assert result['max_actual_speed']<=2+1e-3 and result['max_actual_acceleration']<=2+1e-3
+    assert result['max_integrated_speed']<=2+1e-3 and result['max_integrated_acceleration']<=2+1e-3
+    assert result['trace_samples']>100 and result['max_trace_gap']<=0.02+1e-6
+    if args.delay_model_clock:
+        assert model_clock_delay_start is not None and 0.6<result['max_model_clock_interval']<2.0
+    if args.delay_global_clock:
+        assert global_clock_delay_start is not None and 0.6<result['max_model_clock_interval']<2.0
     assert result['max_tracking_error']<0.3 and result['final_tracking_error']<0.05 and result['final_actual_speed']<0.03
     if args.stop=='none':
         assert result['ready'] and math.dist(last_command[1],(1,0,3))<1e-6

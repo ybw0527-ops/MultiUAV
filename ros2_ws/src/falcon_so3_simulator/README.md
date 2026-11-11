@@ -19,7 +19,26 @@ uninitialized blade-flow variables, fixes the Cholesky rotation projection to
 use the transpose factor, and rejects nonfinite integration state/input instead
 of silently replacing NaNs. Integration uses measured ROS elapsed time, subdivided
 into at most 1 ms steps by default. A paused clock does not advance the plant;
-backward or greater-than-0.5 s clock jumps fail explicitly.
+backward jumps or gaps above `so3_simulator.maximum_clock_catchup` (2 s by
+default) fail explicitly. Supported catch-up replays timestamped command events
+and the 0.5 s command watchdog in chronological order. Future commands do not
+act early, and late commands do not rewrite already integrated history.
+
+Between command events, the reference advances from its received position,
+velocity and acceleration, with prediction speed limited to 1.7 m/s by default.
+Keeping an old position beside a nonzero velocity during a long command gap
+caused large tracking errors. After 0.5 s without a new input, the predicted
+reference brakes at 1.2 m/s² to a stationary hold; it does not jump backward to
+the last received position. These are reference operations, still tracked by
+the force controller and rotor dynamics.
+
+The default total feedback-plus-feedforward net acceleration request is bounded
+to 1.5 m/s² before converting force to attitude, leaving feedback margin above
+the 1.2 m/s² reference bound. Rotor allocation scales torque
+requests together to preserve collective thrust, retaining 50% collective headroom
+on each rotor to limit thrust loss during motor lag. Independent rotor clipping
+previously raised total thrust during saturated yaw requests. These changes act
+on controller inputs; actual state and observed acceleration are never clipped.
 
 ## Launch and validation
 
@@ -52,7 +71,9 @@ cd ros2_ws
 python3 src/falcon_fast_planner/test/initialization_tracking_regression.py --stop none
 python3 src/falcon_fast_planner/test/initialization_tracking_regression.py --stop vertical
 python3 src/falcon_fast_planner/test/initialization_tracking_regression.py --stop horizontal
-python3 src/falcon_map_render/test/autonomous_regression.py --map complex_office --execution-model so3 --duration 60
+python3 src/falcon_fast_planner/test/initialization_tracking_regression.py --stop none --delay-model-clock
+python3 src/falcon_fast_planner/test/initialization_tracking_regression.py --stop none --delay-global-clock
+python3 src/falcon_map_render/test/autonomous_regression.py --map all --execution-model so3 --duration 60
 ```
 
 The initialization test gives node discovery a separate startup budget and only
@@ -62,11 +83,27 @@ speed/acceleration gates, and a pause with zero command-position drift. Cancelli
 initialization holds the stopped position and keeps initialization readiness false;
 the FSM does not automatically explore from an aborted preflight maneuver.
 
+The integrated execution milestone records 79 passing colcon checks, all six
+60-second SO3 exploration runs, normal/vertical-abort/horizontal-abort startup,
+separate 0.65 s model-clock and global-clock interruptions, and a 60-second
+kinematic tunnel compatibility run. The six SO3 runs completed 17 stop episodes;
+maximum integrated speed/acceleration were 1.683 m/s and 1.561 m/s², maximum
+sampled tracking error was 0.0814 m, and minimum source-geometry clearance lower
+bound was 0.414 m for a 0.2 m radius. All four nodes exited cleanly in every map.
+See `test/execution_run_summary.json` for metrics, earlier rejected attempts,
+commands and limitations. These are bounded runs, not completed coverage missions.
+
 ## Interfaces and limits
 
 Inputs: `command` (PositionCommand), `force_disturbance` and `moment_disturbance`
 (Vector3, world force and body moment). Outputs: `odometry`, `imu`, `motor_rpm`
-and diagnostic `so3_cmd`. The graph remaps these to `/uav_simulator/...` topics.
+and diagnostic `so3_cmd`. Additional outputs are `state_trace` (actual integrated
+poses at intervals no greater than 11 ms under the default integration settings,
+including catch-up) and `integration_status` (Float64MultiArray: maximum clock
+interval, catch-up count, maximum input lateness, maximum integrated speed and
+maximum integrated acceleration). The last two metrics include every integration
+substep from startup, so sparse odometry cannot hide a transient peak. The graph
+remaps these to `/uav_simulator/...` topics.
 Odometry preserves FALCON's world-linear/body-angular velocity convention. IMU
 specific force is expressed in the body frame with gravity included correctly.
 

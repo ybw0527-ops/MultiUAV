@@ -2,6 +2,7 @@
 #define _ASTAR_H
 
 #include <iostream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <queue>
@@ -145,6 +146,11 @@ public:
 
   void shortenPath(std::vector<Eigen::Vector3d> &path);
 
+  // Optional local execution clearance for free-only search and shortening.
+  // Global connectivity searches retain their existing occupancy semantics.
+  using SegmentValidator = std::function<bool(const Eigen::Vector3d &, const Eigen::Vector3d &)>;
+  void setSegmentValidator(SegmentValidator validator) { segment_validator_=std::move(validator); }
+
   std::vector<Eigen::Vector3d> getPath();
   double getResolution();
   double getMaxSearchTime();
@@ -169,6 +175,7 @@ private:
   MapServer::Ptr map_server_;
   RayCaster::Ptr ray_caster_;
   rclcpp::Node *node_{nullptr};
+  SegmentValidator segment_validator_;
 };
 
 } // namespace fast_planner

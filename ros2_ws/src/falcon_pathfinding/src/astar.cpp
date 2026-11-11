@@ -339,7 +339,7 @@ int Astar::search(const Eigen::Vector3d &start_pt, const Eigen::Vector3d &end_pt
     bool reach_end = cur_node->index(0) == end_index(0) && cur_node->index(1) == end_index(1) &&
                      cur_node->index(2) == end_index(2);
 
-    if (reach_end) {
+    if (reach_end && (!segment_validator_ || segment_validator_(cur_node->position,end_pt))) {
       backtrack(cur_node, end_pt);
       return REACH_END;
     }
@@ -363,7 +363,7 @@ int Astar::search(const Eigen::Vector3d &start_pt, const Eigen::Vector3d &end_pt
           break;
         }
       }
-      if (safe) {
+      if (safe && (!segment_validator_ || segment_validator_(cur_node->position,end_pt))) {
         backtrack(cur_node, end_pt);
         return REACH_END;
       }
@@ -421,7 +421,7 @@ int Astar::search(const Eigen::Vector3d &start_pt, const Eigen::Vector3d &end_pt
               break;
             }
           }
-          if (!safe) {
+          if (!safe || (segment_validator_ && !segment_validator_(cur_pos,nbr_pos))) {
             continue;
           }
 
@@ -1160,7 +1160,7 @@ void Astar::shortenPath(vector<Vector3d> &path) {
       }
     } else {
       // Add waypoints to shorten path only to avoid collision
-      bool occluded = false;
+      bool occluded = segment_validator_ && !segment_validator_(short_tour.back(),path[i+1]);
       ray_caster_->input(short_tour.back(), path[i + 1]);
       Eigen::Vector3i idx;
       while (ray_caster_->nextId(idx)) {

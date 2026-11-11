@@ -60,6 +60,8 @@ def generate_launch_description():
                          {'use_sim_time':LaunchConfiguration('use_sim_time')}],
              remappings=[('command','/planning/pos_cmd'),('odometry',LaunchConfiguration('odometry_topic')),
                          ('imu','/uav_simulator/imu'),('motor_rpm','/uav_simulator/motor_rpm'),
-                         ('so3_cmd','/uav_simulator/so3_cmd')]),
+                         ('so3_cmd','/uav_simulator/so3_cmd'),
+                         ('state_trace','/uav_simulator/state_trace'),
+                         ('integration_status','/uav_simulator/integration_status')]),
         ]),
     ])

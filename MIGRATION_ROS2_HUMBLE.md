@@ -330,7 +330,7 @@ selectable with `execution_model:=so3` in the complete simulation launch. The
 default remains the kinematic adapter. The port initializes external moment and
 acceleration, removes unused uninitialized flow calculations, fixes the Cholesky
 rotation projection, and fails explicitly on nonfinite state or unsupported clock
-jumps. It preserves upstream PD/feedforward and motor allocation while removing
+jumps. It preserves upstream PD/feedforward and plus-configuration allocation while removing
 the inconsistent adaptive acceleration-error branch and enforcing a 45-degree
 desired-tilt bound. The controller uses the plant's actual mass.
 
@@ -358,6 +358,47 @@ a speed-dependent margin between samples. The default collision radius is 0.2 m.
 This closes the center-only check that allowed an otherwise dynamically feasible
 curve to pass too close to a tunnel wall. Candidate safety is checked before
 selection so an unsafe candidate can fall back to another observed viewpoint.
+
+### Integrated translational-braking audit
+
+SO3 clock catch-up now replays queued reference events and the command watchdog
+at their own simulated times, with substeps no greater than 1 ms by default.
+Future inputs cannot act early and late inputs cannot alter already integrated
+history. Gaps up to 2 s are supported; backward time and larger gaps fail
+explicitly. Actual path history includes catch-up rather than connecting sparse
+odometry endpoints across a missed clock interval.
+
+During command gaps, the reference advances consistently using received p/v/a,
+up to a 1.7 m/s prediction speed bound. At the 0.5 s watchdog deadline it begins
+a continuous 1.2 m/s² reference stop and holds its predicted endpoint. This avoids
+asking the controller to track an old fixed position with a nonzero velocity,
+which caused substantial tracking lag during clock gaps despite bounded forces.
+
+The controller bounds the combined feedback/feedforward net acceleration request
+to 1.5 m/s², leaving margin above the 1.2 m/s² reference limit. Torque saturation
+scales all differential rotor requests together, preserving collective thrust;
+each rotor retains half the collective to reduce thrust loss during motor lag.
+Neither plant state nor acceleration measurements are clipped. The live audit
+checks every integrated substep against the existing 2 m/s and 2 m/s² observation
+gates, as well as sampled tracking error below 0.3 m and source-geometry clearance.
+
+Local free-space A* search and path shortening now apply the planner's occupied
+voxel body-clearance check with an additional 0.05 m route margin. Center-only
+routes could otherwise graze a wall and repeatedly fail spline certification.
+Complete splines still undergo their separate derivative and braking-volume
+checks; route clearance does not replace those checks.
+
+Recorded integrated validation: 79 passing workspace checks and six passing
+60-second SO3 exploration runs, including 17 completed stops. Peak integrated
+speed was 1.683 m/s, acceleration 1.561 m/s², and sampled tracking error 0.0814 m.
+Minimum source-geometry clearance lower bound was 0.414 m for the 0.2 m vehicle
+radius, with zero unsafe samples and four clean node exits per map. Normal
+initialization, vertical/horizontal aborts, 0.65 s model-only/global clock gaps,
+and a default-kinematic tunnel compatibility run also passed. Observations and
+earlier rejected attempts are preserved in
+`ros2_ws/src/falcon_so3_simulator/test/execution_run_summary.json`. This validates
+the current model and bounded runs; complete reachable-space coverage and hardware
+emergency-stop certification remain open.
 The sensor blind spot at a trusted handoff is limited to that existing body
 radius; occupied cells remain forbidden and unobserved travel beyond it is
 rejected. Failed plans refresh frontier observations to avoid retrying stale
@@ -453,8 +494,9 @@ ros2 run falcon_fast_planner trajectory_server_node --ros-args \
 - The upstream optimizer's feasibility costs remain soft and per axis. The ROS 2
   planner and execution server now additionally enforce Euclidean linear speed
   and acceleration bounds on complete position and yaw splines. Roll/pitch,
-  jerk/thrust, actuator realization of emergency braking, and tracked execution
-  remain unvalidated.
+  jerk/thrust and universal actuator guarantees remain unvalidated. Tracked
+  execution and translational braking now have the bounded SO3 observations
+  recorded above; hardware realization and changed-airframe guarantees remain open.
 - The lightweight simulator is not Gazebo and uses rendered depth plus synthetic odometry.
 - The repository does not currently provide a root license file; redistribution terms
   must be confirmed before publishing a derivative repository.

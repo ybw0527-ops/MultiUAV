@@ -105,5 +105,30 @@ TEST(PathCostEvaluatorTest, ComputesTranslationAndYawLowerBound) {
               M_PI + 0.5, 1e-9);
 }
 
+TEST(AstarTest, ClearanceValidatorSurvivesSearchAndShortening) {
+  ensureRosInitialized();
+  auto node=makeTestNode();
+  auto map=std::make_shared<voxel_mapping::MapServer>(*node);
+  for(VoxelAddress address=0;address<map->getVoxelNum();++address)
+    map->getOccupancyGrid()->setOccupancy(address,voxel_mapping::OccupancyType::FREE);
+  Astar astar; astar.init(*node,map);
+  // An execution-only keep-out sphere: the centerline occupancy map is free.
+  const Eigen::Vector3d center(3,2.5,1.5);
+  auto safe=[&](const Eigen::Vector3d &a,const Eigen::Vector3d &b) {
+    const auto delta=(b-a).eval();
+    const double t=delta.squaredNorm()>0 ? std::clamp((center-a).dot(delta)/delta.squaredNorm(),0.0,1.0) : 0;
+    return (a+t*delta-center).norm()>0.8;
+  };
+  astar.setSegmentValidator(safe);
+  ASSERT_EQ(astar.search({0.5,2.5,1.5},{5.5,2.5,1.5}),Astar::REACH_END);
+  auto path=astar.getPath();
+  ASSERT_GE(path.size(),3U);
+  astar.shortenPath(path);
+  for(size_t i=1;i<path.size();++i) EXPECT_TRUE(safe(path[i-1],path[i]));
+  astar.reset();
+  astar.setSegmentValidator([](const Eigen::Vector3d &,const Eigen::Vector3d &) { return false; });
+  EXPECT_EQ(astar.search({0.5,2.5,1.5},{0.6,2.5,1.5}),Astar::NO_PATH);
+}
+
 } // namespace
 } // namespace fast_planner
