@@ -359,6 +359,35 @@ This closes the center-only check that allowed an otherwise dynamically feasible
 curve to pass too close to a tunnel wall. Candidate safety is checked before
 selection so an unsafe candidate can fall back to another observed viewpoint.
 
+### ROS 2 visualization
+
+The simulation graph now accepts `rviz:=true` to open a native RViz2 layout and
+enable observed occupancy-map publication. The layout uses fixed frame `world`,
+best-effort actual odometry, reliable map/frontier clouds, trajectory and camera
+markers. The old ROS 1 RViz layout is retained only as a reference. Visualization
+is opt-in, so the bounded headless regressions retain their existing graph.
+The map-publication override uses a substituted nested YAML parameter file;
+the flat dotted override did not supersede the sensor profile on this host.
+
+From an Ubuntu/WSL terminal after sourcing ROS and the workspace:
+
+```bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=187
+export CYCLONEDDS_URI="$PWD/ros2_ws/src/falcon_so3_simulator/config/cyclone_loopback.xml"
+ros2 launch falcon_map_render simulation.launch.py \
+  map_name:=complex_office execution_model:=so3 rviz:=true use_sim_time:=false \
+  sensor_params_file:="$PWD/ros2_ws/src/falcon_map_render/test/autonomous_regression.yaml"
+```
+
+This uses wall time and does not require an external `/clock` publisher. RViz2
+requires a working desktop display (WSLg on the validated Windows host).
+
+The WSLg window was visually checked with nonempty occupied-map data, actual
+odometry, frontiers and trajectories. A 15-second headless complex-office SO3
+compatibility run also passed motion, tracking and source-geometry checks.
+
 ### Integrated translational-braking audit
 
 SO3 clock catch-up now replays queued reference events and the command watchdog

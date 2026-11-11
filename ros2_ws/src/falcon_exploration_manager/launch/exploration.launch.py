@@ -3,7 +3,7 @@ from launch.actions import DeclareLaunchArgument, GroupAction
 from launch.conditions import IfCondition, LaunchConfigurationEquals
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.parameter_descriptions import ParameterValue, ParameterFile
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
 
@@ -25,12 +25,15 @@ def generate_launch_description():
     params.append(LaunchConfiguration('map_params_file'))
     params.append({'transformer.sensor_pose_topic': LaunchConfiguration('sensor_pose_topic'),
                    'transformer.pose_topic_type': LaunchConfiguration('sensor_pose_type')})
+    params.append(ParameterFile(config('falcon_exploration_manager', 'map_visualization.yaml'),
+                                allow_substs=True))
     params.append({'fast_planner.velocity_scale':ParameterValue(PythonExpression([
         "0.85 if '",LaunchConfiguration('execution_model'),"' == 'so3' else 1.0"]),value_type=float),
                    'fast_planner.acceleration_scale':ParameterValue(PythonExpression([
         "0.60 if '",LaunchConfiguration('execution_model'),"' == 'so3' else 1.0"]),value_type=float)})
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('publish_occupancy_grid', default_value='false'),
         DeclareLaunchArgument('odometry_topic', default_value='/uav_simulator/odometry'),
         DeclareLaunchArgument('sensor_params_file', default_value=config('falcon_exploration_manager', 'robot/uav_model_simulator.yaml')),
         DeclareLaunchArgument('map_params_file', default_value=config('falcon_voxel_mapping', 'voxel_mapping.yaml')),

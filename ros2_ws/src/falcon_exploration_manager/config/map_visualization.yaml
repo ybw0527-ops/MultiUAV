@@ -1,0 +1,4 @@
+/**:
+  ros__parameters:
+    voxel_mapping:
+      publish_occupancy_grid: $(var publish_occupancy_grid)

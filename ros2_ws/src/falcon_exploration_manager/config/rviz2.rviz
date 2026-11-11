@@ -1,0 +1,135 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Enabled: true
+  Global Options:
+    Background Color: 235; 240; 245
+    Fixed Frame: world
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Ground grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Color: 190; 200; 210
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Odometry
+      Name: Actual UAV and trail
+      Enabled: true
+      Topic:
+        Value: /uav_simulator/odometry
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 10
+      Keep: 200
+      Position Tolerance: 0.08
+      Angle Tolerance: 0.15
+      Shape:
+        Value: Arrow
+        Color: 235; 105; 25
+        Alpha: 1
+        Shaft Length: 0.45
+        Shaft Radius: 0.025
+        Head Length: 0.18
+        Head Radius: 0.07
+      Covariance:
+        Value: false
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Observed occupied map
+      Enabled: true
+      Topic:
+        Value: /voxel_mapping/occupancy_grid_occupied
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 2
+      Style: Boxes
+      Size (m): 0.23
+      Alpha: 0.5
+      Color Transformer: FlatColor
+      Color: 85; 105; 125
+      Position Transformer: XYZ
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Active frontiers
+      Enabled: true
+      Topic:
+        Value: /planning_vis/frontier_pcl
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 2
+      Style: Spheres
+      Size (m): 0.12
+      Color Transformer: RGB8
+      Position Transformer: XYZ
+    - Class: rviz_default_plugins/Marker
+      Name: Planned trajectory
+      Enabled: true
+      Topic:
+        Value: /planning_vis/trajectory
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 100
+    - Class: rviz_default_plugins/Marker
+      Name: Command travel history
+      Enabled: true
+      Topic:
+        Value: /planning/travel_traj
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 10
+    - Class: rviz_default_plugins/Marker
+      Name: Camera field of view
+      Enabled: true
+      Topic:
+        Value: /planning/position_cmd_vis
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 10
+    - Class: rviz_default_plugins/Marker
+      Name: Hierarchical grid
+      Enabled: false
+      Value: false
+      Topic:
+        Value: /planning_vis/hgrid
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+    - Class: rviz_default_plugins/Image
+      Name: Camera depth
+      Enabled: false
+      Value: false
+      Topic:
+        Value: /uav_simulator/depth_image
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+      Normalize Range: true
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 28
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 1
+      Pitch: 0.85
+      Yaw: 0.8
+      Near Clip Distance: 0.01
+      Target Frame: <Fixed Frame>
+Window Geometry:
+  Width: 1280
+  Height: 900
