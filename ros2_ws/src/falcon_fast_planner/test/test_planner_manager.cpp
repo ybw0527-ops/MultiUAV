@@ -226,5 +226,22 @@ TEST(FastPlannerManagerTest, BoundsYawAndPreservesMovingHandoffAcrossWrap) {
   EXPECT_THROW(manager.planExplorationYawWaypointsTraj(0,0,1,{{0,0,0}},{13}),std::invalid_argument);
 }
 
+TEST(FastPlannerManagerTest, ReservesStoppingDistanceBeyondTheNominalPosition) {
+  ensureRosInitialized();
+  auto node=std::make_shared<rclcpp::Node>("braking_clearance_test",plannerNodeOptions());
+  FastPlannerManager manager; manager.init(*node); markFree(manager);
+  EXPECT_TRUE(manager.checkBrakingSafety({4.3,0,2},Eigen::Vector3d::Zero()));
+  EXPECT_FALSE(manager.checkBrakingSafety({4.3,0,2},{2,0,0})); // stop crosses task boundary
+  auto grid=manager.map_server_->getOccupancyGrid();
+  const Eigen::Vector3d p(0.5,0.5,2.5), wall(1.5,0.5,2.5);
+  grid->setOccupancy(grid->positionToAddress(wall),voxel_mapping::OccupancyType::OCCUPIED);
+  EXPECT_TRUE(manager.checkBrakingSafety(p,Eigen::Vector3d::Zero()));
+  EXPECT_FALSE(manager.checkBrakingSafety(p,{2,0,0}));
+  grid->setOccupancy(grid->positionToAddress(wall),voxel_mapping::OccupancyType::UNKNOWN);
+  EXPECT_FALSE(manager.checkBrakingSafety(p,{2,0,0}));
+  grid->setOccupancy(grid->positionToAddress(wall),voxel_mapping::OccupancyType::FREE);
+  EXPECT_TRUE(manager.checkBrakingSafety(p,{2,0,0}));
+}
+
 } // namespace
 } // namespace fast_planner

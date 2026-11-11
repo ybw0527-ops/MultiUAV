@@ -38,7 +38,7 @@ falcon_interfaces::msg::Bspline makeTrajectoryMessage(const rclcpp::Time &start_
   position_points << 0.0, 0.0, 1.0,
       0.0, 0.0, 1.0,
       0.5, 0.0, 1.0,
-      1.0, 0.2, 1.1,
+      1.5, 0.2, 1.1,
       1.5, 0.2, 1.1,
       1.5, 0.2, 1.1;
   NonUniformBspline spline(position_points, 3, 1.0);
@@ -211,21 +211,116 @@ TEST(TrajectoryServerTest, ExplicitStopsBrakeYawWithoutRateDiscontinuity) {
     falcon_interfaces::msg::PositionCommand previous, command;
     ASSERT_TRUE(server->sampleCommand(start+rclcpp::Duration::from_seconds(cut),previous));
     ASSERT_GT(previous.yaw_dot,0.01);
-    const auto stopped_position=previous.position;
+    const Eigen::Vector3d initial_position(previous.position.x,previous.position.y,previous.position.z);
+    const Eigen::Vector3d initial_velocity(previous.velocity.x,previous.velocity.y,previous.velocity.z);
+    ASSERT_GT(initial_velocity.norm(),0.1);
     for(int i=1;i<=100;++i) {
       ASSERT_TRUE(server->sampleCommand(start+rclcpp::Duration::from_seconds(cut+0.01*i),command));
       EXPECT_LE(std::abs(command.yaw_dot-previous.yaw_dot),M_PI/2*0.01+1e-7);
       EXPECT_LE(std::abs(std::remainder(command.yaw-previous.yaw,2*M_PI)),0.01*M_PI/2+1e-7);
-      EXPECT_NEAR(command.position.x,stopped_position.x,1e-9);
-      EXPECT_DOUBLE_EQ(command.velocity.x,0.0);
+      const Eigen::Vector3d velocity(command.velocity.x,command.velocity.y,command.velocity.z);
+      const Eigen::Vector3d previous_velocity(previous.velocity.x,previous.velocity.y,previous.velocity.z);
+      EXPECT_LE((velocity-previous_velocity).norm()/0.01,2.0+1e-6);
+      EXPECT_LE(Eigen::Vector3d(command.acceleration.x,command.acceleration.y,command.acceleration.z).norm(),2.0+1e-8);
       previous=command;
     }
     EXPECT_DOUBLE_EQ(command.yaw_dot,0.0);
+    EXPECT_DOUBLE_EQ(Eigen::Vector3d(command.velocity.x,command.velocity.y,command.velocity.z).norm(),0.0);
+    const Eigen::Vector3d stopped_position(command.position.x,command.position.y,command.position.z);
+    EXPECT_NEAR((stopped_position-initial_position).norm(),initial_velocity.squaredNorm()/4.0,1e-6);
+    EXPECT_EQ(command.trajectory_flag,falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED);
     // Repeated FINISH/STOP messages must not move the stopping point or restart braking.
     std_msgs::msg::Int32 stop; stop.data=type; publisher->publish(stop);
     executor.spin_some();
     EXPECT_DOUBLE_EQ(server->trajectoryDuration(),cut);
   }
+}
+
+TEST(TrajectoryServerTest, RejectsNonstationaryEndpointAndMovingFutureReplacement) {
+  ensureRosInitialized();
+  auto server=std::make_shared<TrajectoryServer>(serverOptions());
+  auto message=makeTrajectoryMessage(server->now()-rclcpp::Duration::from_seconds(0.5));
+  std::string error;
+  ASSERT_TRUE(server->setTrajectory(message,&error)) << error;
+  message.traj_id++;
+  message.pos_pts.back().x+=0.01;
+  EXPECT_FALSE(server->setTrajectory(message,&error));
+  EXPECT_NE(error.find("Position spline must end at rest"),std::string::npos);
+  message=makeTrajectoryMessage(server->now()+rclcpp::Duration::from_seconds(5)); message.traj_id=8;
+  EXPECT_FALSE(server->setTrajectory(message,&error));
+  EXPECT_NE(error.find("Future replacement"),std::string::npos);
+  EXPECT_EQ(server->trajectoryId(),7);
+}
+
+TEST(TrajectoryServerTest, FullSpeedDiagonalStopTravelsOneMeterAndCannotBeInterrupted) {
+  ensureRosInitialized();
+  auto server=std::make_shared<TrajectoryServer>(serverOptions());
+  auto sender=std::make_shared<rclcpp::Node>("full_speed_stop_test");
+  auto publisher=sender->create_publisher<std_msgs::msg::Int32>("/planning/replan",10);
+  const auto start=server->now()-rclcpp::Duration::from_seconds(4.0);
+  auto message=makeTrajectoryMessage(start);
+  const std::vector<double> distances{0,0,0.5,2,4,6,8,10,12,13.5,14,14,14};
+  const Eigen::Vector3d direction=Eigen::Vector3d(1,1,0).normalized();
+  Eigen::MatrixXd points(distances.size(),3);
+  message.pos_pts.resize(distances.size());
+  for(size_t i=0;i<distances.size();++i) {
+    const Eigen::Vector3d p=Eigen::Vector3d(0,0,2)+distances[i]*direction;
+    points.row(i)=p.transpose();
+    message.pos_pts[i].x=p.x(); message.pos_pts[i].y=p.y(); message.pos_pts[i].z=p.z();
+  }
+  NonUniformBspline spline(points,3,1.0);
+  const auto knots=spline.getKnot(); message.knots.assign(knots.data(),knots.data()+knots.size());
+  message.yaw_pts.assign(distances.size(),0); message.yaw_dt=1;
+  std::string error;
+  ASSERT_TRUE(server->setTrajectory(message,&error)) << error;
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(server); executor.add_node(sender);
+  const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+  while(server->trajectoryDuration()>=10 && std::chrono::steady_clock::now()<until) {
+    std_msgs::msg::Int32 stop; stop.data=1; publisher->publish(stop);
+    executor.spin_some(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const double cut=server->trajectoryDuration();
+  ASSERT_LT(cut,5.0);
+  falcon_interfaces::msg::PositionCommand initial, stopped;
+  // Reconstruct the exact nanosecond stop stamp; from_seconds truncation can
+  // otherwise sample one nanosecond before braking (a 2 nm position offset).
+  const auto cut_time=start+rclcpp::Duration(std::chrono::nanoseconds(std::llround(cut*1e9)));
+  ASSERT_TRUE(server->sampleCommand(cut_time,initial));
+  EXPECT_NEAR(Eigen::Vector3d(initial.velocity.x,initial.velocity.y,initial.velocity.z).norm(),2,1e-9);
+  auto replacement=makeTrajectoryMessage(server->now()); replacement.traj_id=8;
+  EXPECT_FALSE(server->setTrajectory(replacement,&error));
+  EXPECT_NE(error.find("active emergency brake"),std::string::npos);
+  ASSERT_TRUE(server->sampleCommand(cut_time+rclcpp::Duration::from_seconds(1.01),stopped));
+  const Eigen::Vector3d displacement(stopped.position.x-initial.position.x,
+                                    stopped.position.y-initial.position.y,stopped.position.z-initial.position.z);
+  EXPECT_TRUE(displacement.isApprox(direction,1e-9)) << "displacement error: " << (displacement-direction).transpose();
+  EXPECT_DOUBLE_EQ(Eigen::Vector3d(stopped.velocity.x,stopped.velocity.y,stopped.velocity.z).norm(),0);
+  EXPECT_EQ(stopped.trajectory_flag,falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED);
+}
+
+TEST(TrajectoryServerTest, AcknowledgesStopBeforeFirstTrajectory) {
+  ensureRosInitialized();
+  auto server=std::make_shared<TrajectoryServer>(serverOptions());
+  auto observer=std::make_shared<rclcpp::Node>("initial_hover_stop_test");
+  auto publisher=observer->create_publisher<std_msgs::msg::Int32>("/planning/replan",10);
+  bool acknowledged=false;
+  const auto requested=server->now();
+  auto subscription=observer->create_subscription<falcon_interfaces::msg::PositionCommand>(
+      "/planning/pos_cmd",10,[&](falcon_interfaces::msg::PositionCommand::ConstSharedPtr msg) {
+        if(msg->trajectory_flag!=falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED) return;
+        EXPECT_GE(rclcpp::Time(msg->header.stamp,RCL_ROS_TIME),requested);
+        EXPECT_DOUBLE_EQ(Eigen::Vector3d(msg->velocity.x,msg->velocity.y,msg->velocity.z).norm(),0);
+        acknowledged=true;
+      });
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(server); executor.add_node(observer);
+  const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+  while(!acknowledged && std::chrono::steady_clock::now()<until) {
+    std_msgs::msg::Int32 stop; stop.data=1; publisher->publish(stop);
+    executor.spin_some(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_TRUE(acknowledged);
 }
 
 } // namespace

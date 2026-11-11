@@ -15,6 +15,7 @@
 #include "falcon_interfaces/msg/bspline.hpp"
 #include "falcon_interfaces/msg/position_command.hpp"
 #include "bspline/non_uniform_bspline.h"
+#include "fast_planner/braking_trajectory.h"
 #include "perception_utils/perception_utils.h"
 
 namespace fast_planner {
@@ -44,6 +45,7 @@ private:
                      const rclcpp::Time &time);
   static double pathLength(const std::vector<Eigen::Vector3d> &path);
   Eigen::Vector2d sampleYaw(double relative_time) const;
+  TranslationState sampleTranslation(double relative_time) const;
 
   mutable std::mutex trajectory_mutex_;
   std::vector<NonUniformBspline> trajectory_;
@@ -52,6 +54,7 @@ private:
   rclcpp::Time start_time_{0, 0, RCL_ROS_TIME};
   int64_t trajectory_id_{-1};
   bool received_trajectory_{false};
+  bool stopped_without_trajectory_{false};
   bool task_finished_{false};
 
   falcon_interfaces::msg::PositionCommand command_template_;
@@ -60,6 +63,7 @@ private:
   double max_velocity_{2.0}, max_acceleration_{2.0};
   double max_yaw_velocity_{1.57079632679}, max_yaw_acceleration_{1.57079632679};
   bool yaw_stop_active_{false};
+  BrakingTrajectory translation_brake_;
   double yaw_stop_time_{0.0}, yaw_stop_yaw_{0.0}, yaw_stop_rate_{0.0};
   PerceptionUtils::Ptr perception_utils_;
 

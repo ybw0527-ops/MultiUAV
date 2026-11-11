@@ -130,8 +130,8 @@ replanning. When both the fitted path and the optimized curve are feasible, the
 shorter-duration candidate is tried first and the other is retained for the FSM's
 collision-checked fallback. The trajectory server independently rejects any incoming position
 spline whose bounds exceed the configured limits, keeping its previous valid
-trajectory. This does not establish roll/pitch, jerk/thrust limits, physical
-translation braking during emergency stops, or SO3/dynamics tracking.
+trajectory. This does not establish roll/pitch, jerk/thrust limits or
+SO3/dynamics tracking.
 
 Yaw planning reserves a constructive turning duration before position planning.
 It preserves the initial yaw/rate/acceleration and ends at rest. After restoring
@@ -142,8 +142,8 @@ fallback; yaw is never independently stretched away from the position clock.
 The trajectory server independently enforces `max_yaw_velocity` and
 `max_yaw_acceleration` (both default pi/2, in rad/s and rad/s²) and terminal rest.
 Explicit STOP/FINISH messages decelerate yaw at the angular acceleration limit;
-repeated messages do not restart the deceleration. Translation still holds
-immediately on these messages and is not a physical emergency-braking model.
+repeated messages do not restart the deceleration. Translation uses the bounded
+braking model below.
 The FSM waits for fresh translational and angular rest before a static retry.
 
 The command-to-odometry adapter now differentiates its flatness attitude to
@@ -160,16 +160,58 @@ position/yaw command jumps or unsafe source-geometry samples, with a minimum
 geometry clearance lower bound of 0.371 m. These are bounded-duration observations,
 not complete exploration missions or exact numerical golden expectations.
 
-Online collision checks require the center to be in known free space and test a
-vehicle sphere against occupied voxel boxes. `fast_planner.collision_clearance`
-sets the sphere radius (default 0.2 m); half a sampling interval times the speed
-limit is added to cover motion between 0.02 s checks. Both candidate curves are
-checked over their full duration before selection and checked again by the FSM.
+Explicit translation stops preserve position and velocity and apply deceleration
+opposite the current velocity, with magnitude `max_linear_acceleration`. Thus
+`T = |v|/a` and `d = |v|²/(2a)`: a 2 m/s command takes 1 s and 1 m to stop at
+2 m/s². Acceleration switches at entry/exit; no jerk or attitude-actuator bound
+is claimed. STOP/FINISH are idempotent, an active brake cannot be replaced by a
+new plan, and a future-start replacement cannot interrupt moving commands.
+Position splines must end with zero velocity/acceleration. Command flags are
+ABORT while braking and COMPLETED after translation and yaw both stop. The FSM
+requires a fresh COMPLETED command and fresh stationary odometry before retrying
+from rest or announcing completion.
+
+Online collision checks reserve the entire straight stopping corridor, including
+`fast_planner.braking_reaction_time` (default 0.1 s) of extra forward travel.
+The endpoint is `p + v*reaction_time + v*|v|/(2a)`. This is a spatial reserve;
+the server begins decelerating as soon as it processes STOP. The swept vehicle
+sphere is checked against occupied voxel AABBs using exact segment/box distance,
+including box interiors. `fast_planner.collision_clearance` sets the vehicle
+radius (default 0.2 m). A half-check-interval margin of
+`0.5 * 0.02 * (V + A*reaction_time + V*A/braking_acceleration)` covers the
+family of stopping segments between curve-state checks against occupied volume.
+Here V/A are certified bounds of the candidate curve, so the margin shrinks when
+the curve slows down (at most 0.042 m at default limits). Geometrically usable
+curves with insufficient stopping space are retimed with exact p/v/a handoffs
+and rechecked. Unknown nominal center-segment travel is rejected using half-open
+voxel cells matching map indexing. Unknown surrounding volume and the uncertainty
+ribbon of unknown space between checked states are not certified by the occupied-
+volume margin. Both candidate curves are checked over their full duration before
+selection and checked again by the FSM.
 Unknown neighboring volume and unobserved obstacles remain uncertified; the
 independent original-geometry regression is still required. The trusted handoff
 body itself is treated as known free when its sensor's near-range blind spot
 leaves the center unobserved. This exception is limited to the configured vehicle
 radius around that handoff and never overrides occupied center or neighbor cells.
 Failed plans refresh frontier observations before retrying stale viewpoints.
+The FSM monitors the current braking corridor against map updates while waiting
+for rest. If an obstacle is discovered inside the required stopping distance,
+it reports an unsafe corridor and continues bounded deceleration; it cannot
+guarantee collision avoidance by commanding an impossible instant stop. The
+server has no live map and relies on the planner's corridor reservation. Sensor,
+communication and actuator delays beyond the configured reserve, unobserved
+obstacles, actual SO3 tracking, thrust and jerk remain unvalidated.
+An explicit stop before the first trajectory also receives a fresh COMPLETED
+hover command, preventing a failed initial plan from waiting forever for an
+execution acknowledgement.
+
+The translation-braking baseline is recorded in `test/braking_run_summary.json`:
+68 passing colcon checks and six passing 60-second live runs, including 27 stopped
+episodes and 1450 braking command samples. No position/yaw jumps, position/velocity
+inconsistencies or unsafe source-geometry samples were observed. The minimum
+geometry clearance lower bound was 0.348 m for the 0.2 m vehicle radius. Initial
+positioning is excluded from these exploration-phase brake checks and still uses
+the upstream initialization maneuver; stationary pre-trajectory acknowledgement
+does not certify braking that maneuver or physical SO3 actuator tracking.
 Shutdown is also checked. The harness signals the launch process once and lets
 it stop its nodes; a node crash during teardown fails the run.

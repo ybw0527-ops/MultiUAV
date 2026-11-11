@@ -15,6 +15,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <falcon_interfaces/msg/bspline.hpp>
+#include <falcon_interfaces/msg/position_command.hpp>
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/int32.hpp>
 #include <std_msgs/msg/float32.hpp>
@@ -59,6 +60,7 @@ private:
   rclcpp::TimerBase::SharedPtr exec_timer_, safety_timer_, frontier_timer_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr trigger_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<falcon_interfaces::msg::PositionCommand>::SharedPtr command_sub_;
   rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr replan_pub_;
   rclcpp::Publisher<falcon_interfaces::msg::Bspline>::SharedPtr bspline_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr uncertainty_pub_;
@@ -69,11 +71,14 @@ private:
   rclcpp::Time last_odom_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time stop_requested_time_{0, 0, RCL_ROS_TIME};
   bool waiting_for_stop_{false};
+  bool finish_stop_requested_{false};
+  rclcpp::Time stopped_command_stamp_{0,0,RCL_ROS_TIME};
   double publication_margin_{0.2};
 
   /* helper functions */
   int callExplorationPlanner();
-  void stopAndWaitForOdometry();
+  void stopAndWaitForOdometry(int reason=1);
+  bool stopAcknowledged() const;
   void transitState(EXPL_STATE new_state, string pos_call);
 
   /* ROS functions */

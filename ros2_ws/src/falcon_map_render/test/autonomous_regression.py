@@ -58,6 +58,10 @@ def main():
     result['max_spline_yaw_acceleration_bound'] = 0.0
     result['max_yaw_rate'] = 0.0
     result['max_command_yaw_acceleration'] = 0.0
+    result['max_command_linear_acceleration'] = 0.0
+    result['kinematic_position_inconsistencies'] = 0
+    result['braking_command_samples'] = 0
+    result['completed_stop_episodes'] = 0
     result['yaw_command_jumps'] = 0
     result['shutdown_forced'] = False
     result['frontier_points'] = {'active': 0, 'dormant': 0, 'tiny': 0}
@@ -113,7 +117,17 @@ def main():
                     if yaw_step > 0.05 + math.pi/2*dt:
                         result['yaw_command_jumps'] += 1
                     result['max_command_yaw_acceleration'] = max(result['max_command_yaw_acceleration'], abs(msg.yaw_dot-previous_command[3])/dt)
-            previous_command = (stamp, point, msg.yaw, msg.yaw_dot)
+                    velocity=tuple(values[3:6])
+                    linear_acceleration=math.dist(velocity,previous_command[4])/dt
+                    result['max_command_linear_acceleration']=max(result['max_command_linear_acceleration'],linear_acceleration)
+                    position_error=math.hypot(*(b-a-0.5*dt*(u+v) for a,b,u,v in zip(previous_command[1],point,previous_command[4],velocity)))
+                    if position_error > dt*dt+0.001:
+                        result['kinematic_position_inconsistencies'] += 1
+                if msg.trajectory_flag == PositionCommand.TRAJECTORY_STATUS_COMPLETED and previous_command[5] != msg.trajectory_flag:
+                    result['completed_stop_episodes'] += 1
+            if msg.trajectory_flag == PositionCommand.TRAJECTORY_STATUS_ABORT:
+                result['braking_command_samples'] += 1
+            previous_command = (stamp, point, msg.yaw, msg.yaw_dot, tuple(values[3:6]), msg.trajectory_flag)
             result['max_speed'] = max(result['max_speed'], math.hypot(*values[3:6]))
             result['max_acceleration'] = max(result['max_acceleration'], math.hypot(*values[8:11]))
             result['max_yaw_rate'] = max(result['max_yaw_rate'], abs(msg.yaw_dot))
@@ -210,6 +224,8 @@ def main():
     assert result['max_spline_yaw_acceleration_bound'] <= math.pi/2 + 1e-5, 'Whole yaw spline exceeds acceleration limit'
     assert result['yaw_command_jumps'] == 0, 'Flight command yaw jumped'
     assert result['max_command_yaw_acceleration'] <= math.pi/2 + 0.05, 'Command yaw rate jumped'
+    assert result['max_command_linear_acceleration'] <= 2.0 + 1e-3, 'Command linear velocity jumped'
+    assert result['kinematic_position_inconsistencies'] == 0, 'Command position disagrees with velocity'
     assert result['command_jumps'] == 0, 'Flight command position jumped'
     assert result['trajectories'] >= 2, 'No exploration/replanning trajectory'
     assert result['distance'] > 1.0, 'No executed exploration motion'

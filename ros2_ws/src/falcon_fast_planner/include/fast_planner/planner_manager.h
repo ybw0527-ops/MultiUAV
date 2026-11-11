@@ -20,6 +20,7 @@ struct PlanParameters {
   double ctrl_pt_dist_{0.0};           // distance between adjacent B-spline control points
   double boundary_clearance_{0.3};
   double collision_clearance_{0.2};
+  double braking_reaction_time_{0.1};
 };
 
 struct LocalTrajData {
@@ -70,6 +71,7 @@ public:
                                        const std::vector<int> &yaw_waypts_idx,
                                        double cur_yaw_acc = 0.0);
   bool checkTrajCollision();
+  bool checkBrakingSafety(const Eigen::Vector3d &position, const Eigen::Vector3d &velocity);
 
   // Save traj_id, duration, evaluated position, velocity, acceleration
   void saveBsplineTraj(const std::string &file_name);
@@ -81,7 +83,9 @@ public:
   voxel_mapping::MapServer::Ptr map_server_;
 
 private:
-  bool isCurveSafe(NonUniformBspline curve, double start_time, bool log);
+  bool isCurveSafe(NonUniformBspline curve, double start_time, bool log, bool reserve_braking=true);
+  bool isBrakingSegmentSafe(const Eigen::Vector3d &start, const Eigen::Vector3d &end,
+                            const Eigen::Vector3d &trusted_start, double time_margin, bool log);
   void calcNextYaw(const double &last_yaw, double &yaw);
 
   std::vector<BsplineOptimizer::Ptr> bspline_optimizers_;

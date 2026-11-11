@@ -58,6 +58,13 @@ void ExplorationFSM::init(rclcpp::Node &node) {
   frontier_timer_ = node.create_wall_timer(std::chrono::milliseconds(500), [this]{ frontierCallback(); });
   trigger_sub_ = node.create_subscription<geometry_msgs::msg::PoseStamped>("/move_base_simple/goal", 1, [this](geometry_msgs::msg::PoseStamped::ConstSharedPtr msg){ triggerCallback(msg); });
   odom_sub_ = node.create_subscription<nav_msgs::msg::Odometry>("/odom_world", rclcpp::SensorDataQoS(), [this](nav_msgs::msg::Odometry::ConstSharedPtr msg){ odometryCallback(msg); });
+  command_sub_ = node.create_subscription<falcon_interfaces::msg::PositionCommand>(
+      "/planning/pos_cmd",10,[this](falcon_interfaces::msg::PositionCommand::ConstSharedPtr msg) {
+        if(msg->trajectory_flag==falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED &&
+           Eigen::Vector3d(msg->velocity.x,msg->velocity.y,msg->velocity.z).norm()<1e-3 &&
+           std::abs(msg->yaw_dot)<1e-3)
+          stopped_command_stamp_=rclcpp::Time(msg->header.stamp,RCL_ROS_TIME);
+      });
   replan_pub_ = node.create_publisher<std_msgs::msg::Int32>("/planning/replan", 10);
   bspline_pub_ = node.create_publisher<falcon_interfaces::msg::Bspline>("/planning/bspline", 10);
   uncertainty_pub_ = node.create_publisher<std_msgs::msg::Float32>("/planning/uncertainty", 10);
@@ -116,11 +123,13 @@ void ExplorationFSM::FSMCallback() {
   }
 
   case FINISH: {
+    if(!finish_stop_requested_) {
+      stopAndWaitForOdometry(2);
+      finish_stop_requested_=true;
+    }
+    if(!stopAcknowledged()) break;
+    waiting_for_stop_=false;
     RCLCPP_INFO_ONCE(node_->get_logger(), "[FSM] Exploration finished");
-
-    std_msgs::msg::Int32 replan_msg;
-    replan_msg.data = 2;
-    replan_pub_->publish(replan_msg);
 
     static bool clear_vis = false;
     if (!clear_vis) {
@@ -285,8 +294,7 @@ void ExplorationFSM::FSMCallback() {
 
   case PLAN_TRAJ: {
     if (waiting_for_stop_) {
-      if (last_odom_stamp_ < stop_requested_time_ || fd_->odom_vel_.norm() > 0.05 ||
-          fd_->odom_angular_speed_ > 1e-3) break;
+      if (!stopAcknowledged()) break;
       waiting_for_stop_ = false;
     }
     int cur_cell_id, cur_center_id;
@@ -856,7 +864,11 @@ void ExplorationFSM::safetyCallback() {
   //       voxel_mapping::OccupancyType::OCCUPIED)
   //     << "Exploration failed as current pos is in occupied area. Please restart the program.";
 
-  if (state_ == EXPL_STATE::EXEC_TRAJ) {
+  if(waiting_for_stop_) {
+    if(!planner_manager_->checkBrakingSafety(fd_->odom_pos_,fd_->odom_vel_))
+      RCLCPP_ERROR_THROTTLE(node_->get_logger(),*node_->get_clock(),1000,
+          "Emergency braking corridor became unsafe; continuing bounded deceleration");
+  } else if (state_ == EXPL_STATE::EXEC_TRAJ) {
     // Check safety and trigger replan if necessary
     bool safe = planner_manager_->checkTrajCollision();
     if (!safe) {
@@ -867,12 +879,18 @@ void ExplorationFSM::safetyCallback() {
   }
 }
 
-void ExplorationFSM::stopAndWaitForOdometry() {
+bool ExplorationFSM::stopAcknowledged() const {
+  return stopped_command_stamp_>=stop_requested_time_ && last_odom_stamp_>=stop_requested_time_ &&
+      fd_->odom_vel_.norm()<1e-3 && fd_->odom_angular_speed_<1e-3;
+}
+
+void ExplorationFSM::stopAndWaitForOdometry(int reason) {
   std_msgs::msg::Int32 stop;
-  stop.data = 1;
+  stop.data = reason;
   replan_pub_->publish(stop);
   stop_requested_time_ = node_->now();
   waiting_for_stop_ = true;
+  stopped_command_stamp_=rclcpp::Time(0,0,RCL_ROS_TIME);
   fd_->static_state_ = true;
 }
 

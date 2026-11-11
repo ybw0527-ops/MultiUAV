@@ -169,16 +169,29 @@ bool TrajectoryServer::setTrajectory(const falcon_interfaces::msg::Bspline &mess
       throw std::invalid_argument("Yaw spline must end at rest with zero angular acceleration");
     if (!parsed[5].getControlPoint().allFinite())
       throw std::invalid_argument("Position spline has degenerate derivative knots");
+    if (parsed[1].evaluateDeBoorT(duration).norm()>1e-6 ||
+        parsed[2].evaluateDeBoorT(duration).norm()>1e-6)
+      throw std::invalid_argument("Position spline must end at rest with zero acceleration");
 
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (message.traj_id <= trajectory_id_)
       throw std::invalid_argument("Trajectory IDs must be strictly increasing");
+    if (received_trajectory_) {
+      const double elapsed=(now()-start_time_).seconds();
+      if (yaw_stop_active_ && elapsed>=yaw_stop_time_ &&
+          elapsed<yaw_stop_time_+std::max(translation_brake_.duration(),std::abs(yaw_stop_rate_)/max_yaw_acceleration_))
+        throw std::invalid_argument("Cannot replace an active emergency brake");
+      if (rclcpp::Time(message.start_time,RCL_ROS_TIME)>now() &&
+          (sampleTranslation(elapsed).velocity.norm()>1e-6 || std::abs(sampleYaw(elapsed)[1])>1e-6))
+        throw std::invalid_argument("Future replacement would interrupt moving commands");
+    }
     trajectory_ = std::move(parsed);
     trajectory_duration_ = duration;
     yaw_duration_ = yaw_duration;
     start_time_ = rclcpp::Time(message.start_time, RCL_ROS_TIME);
     trajectory_id_ = message.traj_id;
     received_trajectory_ = true;
+    stopped_without_trajectory_=false;
     yaw_stop_active_ = false;
     task_finished_ = false;
     if (flight_start_time_.nanoseconds() == 0)
@@ -200,15 +213,9 @@ bool TrajectoryServer::sampleCommand(
   if (!std::isfinite(relative_time) || relative_time < 0.0)
     return false;
 
-  const double evaluation_time = std::min(relative_time, trajectory_duration_);
-  const bool finished = relative_time >= trajectory_duration_;
-  const Eigen::Vector3d position = trajectory_[0].evaluateDeBoorT(evaluation_time);
-  const Eigen::Vector3d velocity =
-      finished ? Eigen::Vector3d::Zero() : trajectory_[1].evaluateDeBoorT(evaluation_time);
-  const Eigen::Vector3d acceleration =
-      finished ? Eigen::Vector3d::Zero() : trajectory_[2].evaluateDeBoorT(evaluation_time);
-  const Eigen::Vector3d jerk =
-      finished ? Eigen::Vector3d::Zero() : trajectory_[5].evaluateDeBoorT(evaluation_time);
+  const auto translation=sampleTranslation(relative_time);
+  const auto &position=translation.position, &velocity=translation.velocity;
+  const auto &acceleration=translation.acceleration, &jerk=translation.jerk;
   const auto yaw_state = sampleYaw(relative_time);
   const double yaw = normalizeYaw(yaw_state[0]);
   const double yaw_rate = yaw_state[1];
@@ -219,6 +226,12 @@ bool TrajectoryServer::sampleCommand(
   command = command_template_;
   command.header.stamp = sample_time;
   command.trajectory_id = static_cast<uint32_t>(trajectory_id_);
+  if (yaw_stop_active_ && relative_time>=yaw_stop_time_) {
+    const double stop_duration=std::max(translation_brake_.duration(),std::abs(yaw_stop_rate_)/max_yaw_acceleration_);
+    command.trajectory_flag = relative_time>=yaw_stop_time_+stop_duration ?
+        falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED :
+        falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_ABORT;
+  }
   command.position.x = position.x();
   command.position.y = position.y();
   command.position.z = position.z();
@@ -251,6 +264,21 @@ int64_t TrajectoryServer::trajectoryId() const {
   return trajectory_id_;
 }
 
+TranslationState TrajectoryServer::sampleTranslation(double relative_time) const {
+  if (yaw_stop_active_ && relative_time>=yaw_stop_time_)
+    return translation_brake_.sample(relative_time-yaw_stop_time_);
+  const double time=std::clamp(relative_time,0.0,trajectory_duration_);
+  const bool finished=relative_time>=trajectory_duration_;
+  TranslationState state{trajectory_[0].evaluateDeBoorT(time),Eigen::Vector3d::Zero(),
+                         Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero()};
+  if (!finished) {
+    state.velocity=trajectory_[1].evaluateDeBoorT(time);
+    state.acceleration=trajectory_[2].evaluateDeBoorT(time);
+    state.jerk=trajectory_[5].evaluateDeBoorT(time);
+  }
+  return state;
+}
+
 // Called with trajectory_mutex_ held. Explicit position stops brake yaw at the
 // configured angular acceleration instead of discontinuously zeroing its rate.
 Eigen::Vector2d TrajectoryServer::sampleYaw(double relative_time) const {
@@ -280,8 +308,10 @@ void TrajectoryServer::bsplineCallback(
 
 void TrajectoryServer::replanCallback(const std_msgs::msg::Int32::SharedPtr message) {
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  if (!received_trajectory_)
+  if (!received_trajectory_) {
+    if(message->data>=0 && message->data<=2) stopped_without_trajectory_=true;
     return;
+  }
   const double elapsed = std::max(0.0, (now() - start_time_).seconds());
   double stop_time = trajectory_duration_;
   if (message->data == 0) {
@@ -295,14 +325,20 @@ void TrajectoryServer::replanCallback(const std_msgs::msg::Int32::SharedPtr mess
     RCLCPP_WARN(get_logger(), "Exploration-finished replan requested");
   } else {
     RCLCPP_ERROR(get_logger(), "Invalid replan type: %d", message->data);
+    return;
   }
-  if (stop_time<trajectory_duration_) {
+  if (stop_time<trajectory_duration_ || !yaw_stop_active_) {
     const auto yaw_state = sampleYaw(stop_time);
+    const auto translation=sampleTranslation(stop_time);
+    translation_brake_=BrakingTrajectory(translation.position,translation.velocity,max_acceleration_);
     yaw_stop_time_ = stop_time;
     yaw_stop_yaw_ = yaw_state[0];
     yaw_stop_rate_ = yaw_state[1];
     yaw_stop_active_ = true;
     trajectory_duration_ = stop_time;
+    RCLCPP_INFO(get_logger(),"Braking trajectory: speed=%.3f m/s duration=%.3f s distance=%.3f m",
+        translation.velocity.norm(),translation_brake_.duration(),
+        (translation_brake_.sample(translation_brake_.duration()).position-translation.position).norm());
   }
 }
 
@@ -321,6 +357,8 @@ void TrajectoryServer::commandTimerCallback() {
     command.acceleration = geometry_msgs::msg::Vector3();
     command.jerk = geometry_msgs::msg::Vector3();
     command.yaw_dot = 0.0;
+    if(stopped_without_trajectory_)
+      command.trajectory_flag=falcon_interfaces::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED;
     if (hasTrajectory())
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                           "Trajectory sample unavailable; holding last valid command");

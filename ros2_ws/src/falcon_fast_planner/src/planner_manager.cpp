@@ -9,6 +9,7 @@
 #include <string>
 
 #include "fast_planner/planner_manager.h"
+#include "fast_planner/braking_trajectory.h"
 
 namespace fast_planner {
 namespace {
@@ -107,12 +108,14 @@ void FastPlannerManager::init(rclcpp::Node &node) {
   readParameter(node, "fast_planner.control_points_distance", pp_.ctrl_pt_dist_, -1.0);
   readParameter(node, "bspline_opt.boundary_clearance", pp_.boundary_clearance_, 0.3);
   readParameter(node, "fast_planner.collision_clearance", pp_.collision_clearance_, 0.2);
+  readParameter(node, "fast_planner.braking_reaction_time", pp_.braking_reaction_time_, 0.1);
 
   // Check parameters
   if (!std::isfinite(pp_.max_vel_) || !std::isfinite(pp_.max_acc_) ||
       !std::isfinite(pp_.ctrl_pt_dist_) || pp_.max_vel_ <= 0.0 || pp_.max_acc_ <= 0.0 || pp_.ctrl_pt_dist_ <= 0.0 ||
       !std::isfinite(pp_.boundary_clearance_) || pp_.boundary_clearance_ < 0.0 ||
-      !std::isfinite(pp_.collision_clearance_) || pp_.collision_clearance_ < 0.0)
+      !std::isfinite(pp_.collision_clearance_) || pp_.collision_clearance_ < 0.0 ||
+      !std::isfinite(pp_.braking_reaction_time_) || pp_.braking_reaction_time_<0.0)
     throw std::invalid_argument("Fast planner velocity, acceleration, and control-point distance "
                                 "parameters must be positive");
   if (!std::isfinite(pp_.max_yaw_vel_) || !std::isfinite(pp_.max_yaw_acc_) ||
@@ -351,8 +354,23 @@ bool FastPlannerManager::planExplorationPositionTraj(const std::vector<Eigen::Ve
   NonUniformBspline feasible_position;
   bool optimized_ok = bspline_degree==3 && feasibleCubic(ctrl_pts,dt,tour.front(),cur_vel,
       cur_acc,tour.back(),pp_.max_vel_,pp_.max_acc_,time_lb,feasible_position);
-  if (initial_ok) initial_ok = isCurveSafe(feasible_initial,0.0,true);
-  if (optimized_ok) optimized_ok = isCurveSafe(feasible_position,0.0,true);
+  const auto certify_braking = [&](NonUniformBspline &candidate) {
+    for(int attempt=0;attempt<9;++attempt) {
+      if(isCurveSafe(candidate,0.0,true)) return true;
+      // Only time-repair a geometrically usable path. Re-anchor p/v/a rather
+      // than scaling the old clock, which would break a moving handoff.
+      if(!isCurveSafe(candidate,0.0,false,false)) return false;
+      const auto shape=candidate.getControlPoint();
+      const double interval=candidate.getKnotSpan()*1.2;
+      NonUniformBspline slower;
+      if(!feasibleCubic(shape,interval,tour.front(),cur_vel,cur_acc,tour.back(),
+                        pp_.max_vel_,pp_.max_acc_,time_lb,slower)) return false;
+      candidate=std::move(slower);
+    }
+    return false;
+  };
+  if (initial_ok) initial_ok = certify_braking(feasible_initial);
+  if (optimized_ok) optimized_ok = certify_braking(feasible_position);
   if (!optimized_ok && !initial_ok) {
     RCLCPP_WARN(node_->get_logger(), "No safe position spline satisfies hard speed/acceleration bounds");
     return false;
@@ -562,61 +580,81 @@ void FastPlannerManager::calcNextYaw(const double &last_yaw, double &yaw) {
   }
 }
 
-bool FastPlannerManager::isCurveSafe(NonUniformBspline curve, double start_time, bool log) {
-  constexpr double sample_period = 0.02;
-  const auto bounds=curve.derivativeNormBounds();
-  if (bounds[0]>pp_.max_vel_+1e-6 || bounds[1]>pp_.max_acc_+1e-6) return false;
-  // A speed bound limits deviation between checks. Occupied voxel AABBs include
-  // discretization uncertainty instead of treating an obstacle as its center.
-  const double clearance = pp_.collision_clearance_ + 0.5*pp_.max_vel_*sample_period;
+bool FastPlannerManager::isBrakingSegmentSafe(const Eigen::Vector3d &start, const Eigen::Vector3d &end,
+                                              const Eigen::Vector3d &trusted_start,
+                                              double time_margin, bool log) {
+  const double clearance=pp_.collision_clearance_+time_margin;
   const double resolution = map_server_->getResolution();
   const auto grid = map_server_->getOccupancyGrid();
   Eigen::Vector3d bmin,bmax;
   map_server_->getBox(bmin,bmax);
-  if (clearance>=0.5*(bmax-bmin).minCoeff()) return false;
-  const int extent = static_cast<int>(std::ceil(clearance/resolution))+1;
   const double margin=std::max(pp_.boundary_clearance_,clearance);
-  const double duration = curve.getTimeSum();
-  double time = std::clamp(start_time,0.0,duration);
+  if (!start.allFinite() || !end.allFinite() ||
+      (start.cwiseMin(end).array()<bmin.array()+margin-1e-6).any() ||
+      (start.cwiseMax(end).array()>bmax.array()-margin+1e-6).any()) {
+    if(log) RCLCPP_WARN_THROTTLE(node_->get_logger(),*node_->get_clock(),1000,"Unsafe braking corridor: boundary");
+    return false;
+  }
+  const Eigen::Vector3i low=grid->positionToIndex(start.cwiseMin(end)-Eigen::Vector3d::Constant(clearance));
+  const Eigen::Vector3i high=grid->positionToIndex(start.cwiseMax(end)+Eigen::Vector3d::Constant(clearance));
+  for(int x=low.x();x<=high.x();++x)
+    for(int y=low.y();y<=high.y();++y)
+      for(int z=low.z();z<=high.z();++z) {
+        const Eigen::Vector3i index(x,y,z);
+        if(!grid->isInMap(index)) continue;
+        const auto occupancy=grid->getVoxel(index).value;
+        if(occupancy==voxel_mapping::OccupancyType::FREE) continue;
+        const Eigen::Vector3d center=grid->indexToPosition(index);
+        const Eigen::Vector3d box_low=center-Eigen::Vector3d::Constant(0.5*resolution);
+        const Eigen::Vector3d box_high=center+Eigen::Vector3d::Constant(0.5*resolution);
+        if(occupancy==voxel_mapping::OccupancyType::OCCUPIED) {
+          if(segmentBoxSquaredDistance(start,end,box_low,box_high)>clearance*clearance) continue;
+        } else {
+          // Check the nominal center segment against half-open voxel cells,
+          // matching positionToIndex on shared faces. Unknown surrounding body
+          // volume is not certified; occupied-volume inflation remains separate.
+          double entry,exit;
+          if(!segmentBoxInterval(start,end,box_low,
+                                 box_high-Eigen::Vector3d::Constant(1e-9),entry,exit)) continue;
+          if ((start+entry*(end-start)-trusted_start).norm()<=pp_.collision_clearance_ &&
+              (start+exit*(end-start)-trusted_start).norm()<=pp_.collision_clearance_) continue;
+        }
+        if(log) RCLCPP_WARN_THROTTLE(node_->get_logger(),*node_->get_clock(),1000,
+            "Unsafe braking corridor: %s at voxel (%.3f, %.3f, %.3f), segment (%.3f, %.3f, %.3f)->(%.3f, %.3f, %.3f)",
+            occupancy==voxel_mapping::OccupancyType::OCCUPIED ? "occupied" : "unknown",
+            center.x(),center.y(),center.z(),start.x(),start.y(),start.z(),end.x(),end.y(),end.z());
+        return false;
+      }
+  return true;
+}
+
+bool FastPlannerManager::checkBrakingSafety(const Eigen::Vector3d &position, const Eigen::Vector3d &velocity) {
+  if (!position.allFinite() || !velocity.allFinite() || velocity.norm()>pp_.max_vel_+1e-6) return false;
+  const BrakingTrajectory brake(position,velocity,pp_.max_acc_);
+  const Eigen::Vector3d end=brake.sample(brake.duration()).position+pp_.braking_reaction_time_*velocity;
+  return isBrakingSegmentSafe(position,end,position,0.0,true);
+}
+
+bool FastPlannerManager::isCurveSafe(NonUniformBspline curve, double start_time, bool log, bool reserve_braking) {
+  constexpr double sample_period=0.02;
+  const auto bounds=curve.derivativeNormBounds();
+  if(bounds[0]>pp_.max_vel_+1e-6 || bounds[1]>pp_.max_acc_+1e-6) return false;
+  auto velocity=curve.getDerivative();
+  const double duration=curve.getTimeSum();
+  double time=std::clamp(start_time,0.0,duration);
   const Eigen::Vector3d trusted_start=curve.evaluateDeBoorT(time);
-  while (true) {
-    const Eigen::Vector3d point = curve.evaluateDeBoorT(time);
-    bool safe = point.allFinite() &&
-        (point.array() >= bmin.array()+margin-1e-6).all() &&
-        (point.array() <= bmax.array()-margin+1e-6).all();
-    const char *reason="boundary";
-    Eigen::Vector3d obstacle=Eigen::Vector3d::Zero();
-    if (safe) {
-      const auto state=map_server_->getOccupancy(point);
-      // The measured handoff body is already known to be free even when the
-      // depth sensor's near-range blind spot leaves its center unobserved.
-      safe=state==voxel_mapping::OccupancyType::FREE ||
-          (state==voxel_mapping::OccupancyType::UNKNOWN &&
-           (point-trusted_start).norm()<=pp_.collision_clearance_);
-      reason=state==voxel_mapping::OccupancyType::UNKNOWN ? "unobserved center" : "occupied center";
-    }
-    if (safe) {
-      const auto index=grid->positionToIndex(point);
-      for (int x=-extent;x<=extent && safe;++x)
-        for (int y=-extent;y<=extent && safe;++y)
-          for (int z=-extent;z<=extent && safe;++z) {
-            const Eigen::Vector3i neighbor=index+Eigen::Vector3i(x,y,z);
-            if (!grid->isInMap(neighbor)) continue;
-            const Eigen::Vector3d gap=((grid->indexToPosition(neighbor)-point).cwiseAbs()-
-                Eigen::Vector3d::Constant(0.5*resolution)).cwiseMax(0.0);
-            if (gap.squaredNorm()>clearance*clearance) continue;
-            if (grid->getVoxel(neighbor).value==voxel_mapping::OccupancyType::OCCUPIED) {
-              safe=false; reason="occupied neighbor"; obstacle=grid->indexToPosition(neighbor);
-            }
-          }
-    }
-    if (!safe) {
-      if (log) RCLCPP_WARN_THROTTLE(node_->get_logger(),*node_->get_clock(),1000,
-          "Unsafe curve: %s at (%.3f, %.3f, %.3f), obstacle (%.3f, %.3f, %.3f)",
-          reason,point.x(),point.y(),point.z(),obstacle.x(),obstacle.y(),obstacle.z());
-      return false;
-    }
-    if (time>=duration) return true;
+  // d[p + u(v*reaction + v*|v|/(2a))]/dt <= V + a*reaction + V.
+  // Inflate the swept sphere by half a temporal check interval times this
+  // bound; the entire family of between-check stopping segments is covered.
+  const double time_margin=0.5*sample_period*(bounds[0]+(reserve_braking ?
+      bounds[1]*pp_.braking_reaction_time_+bounds[0]*bounds[1]/pp_.max_acc_ : 0.0));
+  while(true) {
+    const Eigen::Vector3d p=curve.evaluateDeBoorT(time), v=velocity.evaluateDeBoorT(time);
+    const BrakingTrajectory brake(p,v,pp_.max_acc_);
+    const Eigen::Vector3d end=reserve_braking ?
+        (brake.sample(brake.duration()).position+pp_.braking_reaction_time_*v).eval() : p;
+    if(!isBrakingSegmentSafe(p,end,trusted_start,time_margin,log)) return false;
+    if(time>=duration) return true;
     time=std::min(time+sample_period,duration);
   }
 }

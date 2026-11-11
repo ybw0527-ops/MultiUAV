@@ -250,8 +250,8 @@ and a checked fallback when soft yaw optimization violates the limits. The FSM's
 position fallback must also pass yaw feasibility. Incoming curves are checked
 independently at the trajectory server. STOP/FINISH now brake yaw at the configured
 acceleration instead of instantaneously zeroing its rate; static retries wait
-for angular rest. Translation stopping remains instantaneous and unvalidated
-as physical braking.
+for angular rest. At that recorded baseline, translation stopping was still
+instantaneous; the subsequent braking stage below replaces it.
 
 The lightweight odometry adapter differentiates its existing flatness attitude
 to emit body angular velocity instead of the upstream linear-acceleration payload
@@ -271,6 +271,47 @@ a 0.2 m vehicle radius. See
 and limits; FSM FINISH announcements are not full-coverage certificates.
 Both isolated planner/server suites also passed 20 native repetitions each
 (120 planner plus 120 server case executions).
+
+The subsequent translation-braking stage replaces instantaneous position holds
+with velocity-continuous, constant-magnitude deceleration. `T=|v|/a` and
+`d=|v|²/(2a)` are enforced with the shared configured linear acceleration limit;
+2 m/s stops in 1 s and 1 m at the default 2 m/s². Position splines must end at
+rest. STOP/FINISH preserve the handoff velocity, repeated requests are idempotent,
+and active braking cannot be interrupted by a replacement. Future-start messages
+are rejected if replacing moving commands would create an instantaneous hold.
+The server marks braking commands ABORT and stopped commands COMPLETED. The FSM
+waits for a fresh stopped command plus stationary odometry before static retries
+and FINISH announcements.
+
+Candidate and live-curve safety now reserve the family of straight braking
+segments, with a configurable 0.1 s reaction-distance reserve, a 0.2 m vehicle
+sphere, exact segment/AABB distances, unknown-center rejection, and a conservative
+between-check state margin. The same corridor is monitored against new map
+observations while stopping. Newly discovered obstacles inside the unavoidable
+stopping distance are reported; bounded deceleration continues without a false
+instant-stop guarantee. The execution server has no map and relies on this
+planner-side reservation. Acceleration switches at brake entry/exit, so jerk,
+roll/pitch/thrust actuation, delays beyond the reaction reserve, and actual
+SO3/dynamics tracking remain unvalidated. This stage validates translational
+kinematics and command consistency, not hardware emergency-stop certification.
+The temporal occupied-volume margin uses each candidate's certified derivative
+bounds. A path with insufficient braking clearance is slowed and checked again
+while preserving its p/v/a handoff. Unknown nominal center segments use half-open
+voxel boundaries matching map indexing; unknown surrounding/interpolated ribbon
+volume is not certified. A stop before the first trajectory receives a stationary
+COMPLETED acknowledgement, allowing recovery from a rejected initial plan.
+
+The recorded translation-braking baseline reports 68 passing colcon checks and
+six passing 60-second live runs. The runs exercised 27 completed stop episodes
+and 1450 braking command samples. Finite-difference command acceleration remained
+at or below 2 m/s² within floating-point tolerance, with no position/yaw jumps
+or position/velocity inconsistencies. The minimum source-geometry clearance lower
+bound was 0.348 m for a 0.2 m vehicle radius. No map-update braking-corridor alarm
+occurred in these runs. See
+`ros2_ws/src/falcon_map_render/test/braking_run_summary.json` for observations,
+reproduction details and remaining physical-model limitations.
+Three native test suites also passed 20 repetitions each: 60 braking-core,
+140 planner and 180 trajectory-server case executions (380 total).
 
 Candidate and live-trajectory collision checks now require known free center
 voxels and account for the vehicle sphere against occupied voxel AABBs, including
@@ -371,7 +412,7 @@ ros2 run falcon_fast_planner trajectory_server_node --ros-args \
 - The upstream optimizer's feasibility costs remain soft and per axis. The ROS 2
   planner and execution server now additionally enforce Euclidean linear speed
   and acceleration bounds on complete position and yaw splines. Roll/pitch,
-  jerk/thrust, translational emergency-braking dynamics, and tracked execution
+  jerk/thrust, actuator realization of emergency braking, and tracked execution
   remain unvalidated.
 - The lightweight simulator is not Gazebo and uses rendered depth plus synthetic odometry.
 - The repository does not currently provide a root license file; redistribution terms
