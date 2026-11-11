@@ -1,4 +1,43 @@
-# FALCON
+# FALCON ROS 2 Humble Port
+
+本仓库基于 [HKUST-Aerial-Robotics/FALCON](https://github.com/HKUST-Aerial-Robotics/FALCON)，
+在 `ros2_ws/` 中提供原生 ROS 2 Humble 迁移版本。原始 ROS 1 代码、作者信息和论文引用保留在下方。
+
+当前完成单无人机自主探索仿真，包括地图融合、前沿检测、层次网格规划、轨迹执行、
+SO3 刚体与旋翼动力学、平移急停，以及 RViz2 可视化。
+
+- 79 项工作区检查，0 失败。
+- 六张地图各 60 秒 SO3 仿真验收通过，记录了 17 次完成停止。
+- 这是阶段性仿真验证；实机飞行、多机协同及全程可达空间覆盖尚未完成验收。
+- [迁移记录、依赖与验证范围](MIGRATION_ROS2_HUMBLE.md)
+- [动力学与急停验证记录](ros2_ws/src/falcon_so3_simulator/test/execution_run_summary.json)
+
+## ROS 2 快速启动
+
+环境为 Ubuntu 22.04 + ROS 2 Humble；Windows 可使用带 WSLg 的 WSL2。
+先按迁移文档安装依赖，包括 Cyclone DDS 和 RViz2，然后在仓库根目录执行：
+
+```bash
+./scripts/build_ros2_humble.bash --parallel-workers 4
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=187
+export CYCLONEDDS_URI="$PWD/ros2_ws/src/falcon_so3_simulator/config/cyclone_loopback.xml"
+
+ros2 launch falcon_map_render simulation.launch.py \
+  map_name:=complex_office execution_model:=so3 rviz:=true use_sim_time:=false \
+  sensor_params_file:="$PWD/ros2_ws/src/falcon_map_render/test/autonomous_regression.yaml"
+```
+
+初始化后会自动探索，并打开 RViz2，显示实际位姿、占据地图、前沿和轨迹。
+不需要外部 `/clock` 发布器；按 Ctrl+C 退出。在其他终端查看话题时，使用相同的 ROS 环境和域号。
+
+---
+
+# Original FALCON project
 
 <div align="center">
 <a href="https://arxiv.org/abs/2407.00577">
